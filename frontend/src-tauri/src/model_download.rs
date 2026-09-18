@@ -225,8 +225,31 @@ const MODELS: &[DownloadableModel] = &[
         required_files: &["encoder_model_int8.onnx", "decoder_model_merged_int8.onnx", "tokenizer.json"],
     },
     DownloadableModel {
+        id: "opus-mt-it-en",
+        display_name: "OPUS-MT 翻译模型（意大利语 → 英语，实时链路）",
+        dir_name: "opus-mt-it-en",
+        sources: &[
+            ModelSource::Files {
+                base_url: "https://huggingface.co/Xenova/opus-mt-it-en",
+                resolve_path: HF_RESOLVE,
+                files: OPUS_MT_FILES,
+            },
+            ModelSource::Files {
+                base_url: "https://hf-mirror.com/Xenova/opus-mt-it-en",
+                resolve_path: HF_RESOLVE,
+                files: OPUS_MT_FILES,
+            },
+        ],
+        size_bytes: 145_000_000,
+        required_files: &[
+            "encoder_model_int8.onnx",
+            "decoder_model_merged_int8.onnx",
+            "tokenizer.json",
+        ],
+    },
+    DownloadableModel {
         id: "m2m100-418m-int8",
-        display_name: "M2M100 418M INT8（实时多语言翻译）",
+        display_name: "M2M100 418M INT8（实验性·暂不用于实时会议）",
         dir_name: "m2m100-418m-int8",
         sources: &[
             ModelSource::Files {

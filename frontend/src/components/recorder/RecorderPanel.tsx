@@ -76,7 +76,12 @@ function useRecorderInit() {
       setTranslationHomeLang(home).catch(() => {}),
     ])
       .then(([engine]) => {
-        if (engine) useAppStore.getState().setTranslationEngine(engine)
+        if (engine === 'm2m100') {
+          useAppStore.getState().setTranslationEngine('opus')
+          ipcSetTranslationEngine('opus').catch(() => {})
+        } else if (engine) {
+          useAppStore.getState().setTranslationEngine(engine)
+        }
         return getTranslationTargetLang().catch(() => null)
       })
       .then((l) => {
@@ -229,8 +234,7 @@ export function RecorderControls() {
                 onChange={(e) => handleEngineChange(e.target.value as TranslationEngine)}
                 title={t.recTranslateEngine}
               >
-                <option value="m2m100">M2M100 418M INT8（实时）</option>
-                <option value="opus">{t.recEngineOpus}</option>
+                <option value="opus">{t.recEngineOpus} · Italiano → 中文</option>
                 <option value="hymt2">{t.recEngineHymt2}</option>
               </select>
             </>

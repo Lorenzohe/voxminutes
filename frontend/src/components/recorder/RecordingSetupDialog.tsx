@@ -244,12 +244,13 @@ export function RecordingSetupDialog({ open, onOpenChange, onConfirm }: Recordin
                   const next = e.target.value
                   setLanguage(next)
                   if (next === 'it') {
-                    if (translationEngine !== 'm2m100') {
-                      handleEngineChange('m2m100')
+                    if (translationEngine !== 'opus') {
+                      handleEngineChange('opus')
                     }
-                    if (['zh', 'en', 'ja', 'ko'].includes(home) && translateTargetLang !== home) {
-                      setTranslateTargetLang(home)
-                      ipcSetTranslationTargetLang(home).catch(() => {})
+                    const target = home === 'en' ? 'en' : 'zh'
+                    if (translateTargetLang !== target) {
+                      setTranslateTargetLang(target)
+                      ipcSetTranslationTargetLang(target).catch(() => {})
                     }
                   }
                 }}
@@ -296,8 +297,7 @@ export function RecordingSetupDialog({ open, onOpenChange, onConfirm }: Recordin
                     value={translationEngine}
                     onChange={(e) => handleEngineChange(e.target.value as TranslationEngine)}
                   >
-                    <option value="m2m100">M2M100 418M INT8（实时）</option>
-                    <option value="opus">{t.recEngineOpus}</option>
+                    <option value="opus">{t.recEngineOpus} · Italiano → 中文</option>
                     <option value="hymt2">{t.recEngineHymt2}</option>
                   </select>
                 </label>

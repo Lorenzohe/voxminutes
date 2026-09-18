@@ -24,6 +24,7 @@ use m2m100::M2M100Engine;
 
 pub const MODEL_DIR_ZH_EN: &str = "opus-mt-zh-en";
 pub const MODEL_DIR_EN_ZH: &str = "opus-mt-en-zh";
+pub const MODEL_DIR_IT_EN: &str = "opus-mt-it-en";
 pub const MODEL_DIR_M2M100: &str = "m2m100-418m-int8";
 
 /// Realtime inline translation master switch (default off).
@@ -76,6 +77,7 @@ pub fn default_target_for_home(home: &str) -> String {
 
 static ZH_EN_ENGINE: LazyLock<Mutex<Option<Arc<OpusMtEngine>>>> = LazyLock::new(|| Mutex::new(None));
 static EN_ZH_ENGINE: LazyLock<Mutex<Option<Arc<OpusMtEngine>>>> = LazyLock::new(|| Mutex::new(None));
+static IT_EN_ENGINE: LazyLock<Mutex<Option<Arc<OpusMtEngine>>>> = LazyLock::new(|| Mutex::new(None));
 static M2M100_ENGINE: LazyLock<Mutex<Option<Arc<M2M100Engine>>>> = LazyLock::new(|| Mutex::new(None));
 
 fn model_dir(name: &str) -> PathBuf {
@@ -86,6 +88,7 @@ pub fn get_engine(direction: &str) -> Result<Arc<OpusMtEngine>, String> {
     let (slot, dir_name) = match direction {
         "zh-en" => (&ZH_EN_ENGINE, MODEL_DIR_ZH_EN),
         "en-zh" => (&EN_ZH_ENGINE, MODEL_DIR_EN_ZH),
+        "it-en" => (&IT_EN_ENGINE, MODEL_DIR_IT_EN),
         other => return Err(format!("不支持的翻译方向: {}", other)),
     };
 
@@ -156,7 +159,11 @@ pub fn unload_m2m100_engine() {
 /// Unload both OPUS-MT direction engines, freeing their memory (called when
 /// switching to a different translation engine).
 pub fn unload_opus_engines() {
-    for (slot, direction) in [(&ZH_EN_ENGINE, "zh-en"), (&EN_ZH_ENGINE, "en-zh")] {
+    for (slot, direction) in [
+        (&ZH_EN_ENGINE, "zh-en"),
+        (&EN_ZH_ENGINE, "en-zh"),
+        (&IT_EN_ENGINE, "it-en"),
+    ] {
         if let Ok(mut guard) = slot.lock() {
             if guard.take().is_some() {
                 log::info!("OPUS-MT 引擎已卸载 ({})，内存已释放", direction);
@@ -170,6 +177,7 @@ pub fn is_model_installed(direction: &str) -> bool {
     let dir_name = match direction {
         "zh-en" => MODEL_DIR_ZH_EN,
         "en-zh" => MODEL_DIR_EN_ZH,
+        "it-en" => MODEL_DIR_IT_EN,
         _ => return false,
     };
     let dir = model_dir(dir_name);
@@ -254,6 +262,11 @@ static TRANSLATE_QUEUE: LazyLock<Mutex<VecDeque<TranslateTask>>> =
 static TRANSLATE_SEEN: LazyLock<Mutex<HashSet<u64>>> =
     LazyLock::new(|| Mutex::new(HashSet::new()));
 
+/// Italian -> English -> Chinese uses two sequential Marian passes. Limit
+/// preview work so translation cannot starve Whisper Small on CPU.
+static LAST_IT_OPUS_PARTIAL_AT: LazyLock<Mutex<Option<std::time::Instant>>> =
+    LazyLock::new(|| Mutex::new(None));
+
 /// 新录音开始（sequence 重置）：清空待译队列与已见集合。
 pub fn reset_translation_session() {
     if let Ok(mut q) = TRANSLATE_QUEUE.lock() {
@@ -261,6 +274,9 @@ pub fn reset_translation_session() {
     }
     if let Ok(mut seen) = TRANSLATE_SEEN.lock() {
         seen.clear();
+    }
+    if let Ok(mut last) = LAST_IT_OPUS_PARTIAL_AT.lock() {
+        *last = None;
     }
 }
 
@@ -321,13 +337,31 @@ fn resolve_direction(text: &str, target: &str) -> Option<(String, String, String
             effective_target,
         ))
     } else {
-        // OPUS-MT 引擎：仅 zh ⇄ en
+        // OPUS realtime engine. For Italian we use a stable two-stage path:
+        // it -> en, then (when Chinese is requested) en -> zh.
         if !matches!(target, "auto" | "zh" | "en") {
             log::warn!("OPUS-MT 引擎不支持目标语言 {}，跳过翻译", target);
             return None;
         }
+
+        let asr_hint = crate::get_language_preference_internal()
+            .filter(|lang| lang != "auto" && !lang.is_empty());
+        if asr_hint.as_deref() == Some("it") && !is_chinese_dominant(text) {
+            let effective_target = if target == "auto" { "zh" } else { target };
+            return match effective_target {
+                "en" => Some(("it-en".to_string(), "it".to_string(), "en".to_string())),
+                "zh" => Some((
+                    "it-zh-via-en".to_string(),
+                    "it".to_string(),
+                    "zh".to_string(),
+                )),
+                _ => None,
+            };
+        }
+
         let source_is_zh = is_chinese_dominant(text);
-        let (direction, source_lang) = if source_is_zh { ("zh-en", "zh") } else { ("en-zh", "en") };
+        let (direction, source_lang) =
+            if source_is_zh { ("zh-en", "zh") } else { ("en-zh", "en") };
         let effective_target: &str = if target == "auto" {
             if source_is_zh { "en" } else { "zh" }
         } else {
@@ -400,8 +434,21 @@ pub fn queue_partial_translation<R: Runtime>(
         .lock()
         .map(|t| t.clone())
         .unwrap_or_else(|_| "en".to_string());
-    if resolve_direction(&text, &target).is_none() {
+    let Some((direction, _, _)) = resolve_direction(&text, &target) else {
         return;
+    };
+    if direction == "it-zh-via-en" || direction == "it-en" {
+        if let Ok(mut last) = LAST_IT_OPUS_PARTIAL_AT.lock() {
+            let now = std::time::Instant::now();
+            if last
+                .as_ref()
+                .map(|t| now.duration_since(*t) < std::time::Duration::from_secs(8))
+                .unwrap_or(false)
+            {
+                return;
+            }
+            *last = Some(now);
+        }
     }
 
     if let Ok(mut q) = TRANSLATE_QUEUE.lock() {
@@ -527,6 +574,15 @@ pub async fn process_pending_translations<R: Runtime>(app: AppHandle<R>) {
                         .translate(&text, &source_lang_stream, &target_lang_stream)
                         .map_err(|e| e.to_string())
                 })
+            } else if direction_for_task == "it-zh-via-en" {
+                let it_en = get_engine("it-en")?;
+                let english = it_en
+                    .translate_greedy(&text)
+                    .map_err(|e| e.to_string())?;
+                let en_zh = get_engine("en-zh")?;
+                en_zh
+                    .translate_greedy(&english)
+                    .map_err(|e| e.to_string())
             } else {
                 get_engine(&direction_for_task).and_then(|engine| {
                     engine.translate_greedy(&text).map_err(|e| e.to_string())

@@ -48,6 +48,7 @@ fn load_tokenizer(path: &Path) -> Result<Tokenizer> {
 pub enum Direction {
     ZhEn,
     EnZh,
+    ItEn,
 }
 
 pub struct OpusMtEngine {
@@ -66,6 +67,7 @@ impl OpusMtEngine {
     pub fn load(dir: &Path) -> Result<Self> {
         let direction = match dir.file_name().and_then(|n| n.to_str()) {
             Some("opus-mt-zh-en") => Direction::ZhEn,
+            Some("opus-mt-it-en") => Direction::ItEn,
             _ => Direction::EnZh,
         };
         let encoder_path = dir.join(ENCODER_FILE);
@@ -168,6 +170,8 @@ impl OpusMtEngine {
             Direction::EnZh => ratio < 0.28,
             // 英译中反向：完整 zh→en 约 1.5~3.0
             Direction::ZhEn => ratio < 1.2,
+            // Italian and English have comparable character counts.
+            Direction::ItEn => ratio < 0.45,
         }
     }
 
