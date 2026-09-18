@@ -51,6 +51,7 @@ const LANG_TABLE: &[(&str, &str, &str)] = &[
     ("es", "西班牙语", "Spanish"),
     ("ru", "俄语", "Russian"),
     ("pt", "葡萄牙语", "Portuguese"),
+    ("it", "意大利语", "Italian"),
     ("zh-Hant", "繁体中文", "Traditional Chinese"),
     ("yue", "粤语", "Cantonese"),
     ("th", "泰语", "Thai"),
