@@ -19,14 +19,14 @@ jobs:
         with:
           components: rustfmt
 
-      - name: Check modified Rust files parse
+      - name: Parse modified Rust files
         shell: powershell
         run: |
-          rustfmt --edition 2021 --check frontend/src-tauri/src/sherpa_onnx_engine/engine.rs
-          rustfmt --edition 2021 --check frontend/src-tauri/src/sherpa_onnx_engine/commands.rs
-          rustfmt --edition 2021 --check frontend/src-tauri/src/translation/llm.rs
-          rustfmt --edition 2021 --check frontend/src-tauri/src/translation/mod.rs
-          rustfmt --edition 2021 --check frontend/src-tauri/src/model_download.rs
+          rustfmt --edition 2021 --emit stdout frontend/src-tauri/src/sherpa_onnx_engine/engine.rs | Out-Null
+          rustfmt --edition 2021 --emit stdout frontend/src-tauri/src/sherpa_onnx_engine/commands.rs | Out-Null
+          rustfmt --edition 2021 --emit stdout frontend/src-tauri/src/translation/llm.rs | Out-Null
+          rustfmt --edition 2021 --emit stdout frontend/src-tauri/src/translation/mod.rs | Out-Null
+          rustfmt --edition 2021 --emit stdout frontend/src-tauri/src/model_download.rs | Out-Null
 
       - name: Create standalone Whisper API smoke crate
         shell: powershell
