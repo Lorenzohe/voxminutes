@@ -126,6 +126,29 @@ fn find_sense_voice_dir() -> Option<PathBuf> {
     None
 }
 
+fn find_whisper_dir() -> Option<PathBuf> {
+    let base = get_models_dir();
+    for name in &["sherpa-onnx-whisper-tiny", "whisper-tiny"] {
+        let dir = base.join(name);
+        if SherpaOnnxEngine::validate_whisper_model_dir(&dir) {
+            return Some(dir);
+        }
+    }
+    if let Ok(entries) = std::fs::read_dir(&base) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = entry.file_name().to_string_lossy().to_string();
+            if path.is_dir()
+                && name.contains("whisper")
+                && SherpaOnnxEngine::validate_whisper_model_dir(&path)
+            {
+                return Some(path);
+            }
+        }
+    }
+    None
+}
+
 /// Find the new X-ASR model directory (sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-*).
 fn find_x_asr_model_dir() -> Option<PathBuf> {
     let base = get_models_dir();
@@ -187,6 +210,32 @@ pub async fn sherpa_onnx_get_models() -> Result<Vec<serde_json::Value>, String> 
             "has_hotwords": false
         }));
     }
+
+    // Local multilingual Whisper model. This is the first local ASR option
+    // that explicitly supports Italian.
+    let whisper_status = if let Some(ref _dir) = find_whisper_dir() {
+        let loaded = SHERPA_ONNX_ENGINE
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|e| e.get_model_name().starts_with("whisper-"))
+            .unwrap_or(false);
+        if loaded { "Loaded" } else { "Available" }
+    } else {
+        "Missing"
+    };
+    models.push(serde_json::json!({
+        "name": "whisper-tiny",
+        "status": whisper_status,
+        "size_mb": 250,
+        "languages": ["it", "en", "es", "fr", "de", "pt", "zh", "ja", "ko"],
+        "architecture": "Whisper Tiny Multilingual (Sherpa-ONNX Rust)",
+        "description": "本地多语言识别，支持意大利语；适合低延迟会议转写",
+        "has_punctuation": true,
+        "has_timestamps": false,
+        "has_hotwords": false,
+        "is_remote": false
+    }));
 
     // Remote Qwen3-ASR model (requires LAN server)
     // Only mark as "Available" if the remote endpoint has been configured;
@@ -329,6 +378,8 @@ pub async fn sherpa_onnx_load_model(model_name: String) -> Result<(), String> {
             return Err("SenseVoice model is currently disabled. Enable FEATURE_SENSEVOICE_ENABLED in lib.rs to use it.".to_string());
         }
         find_sense_voice_dir()
+    } else if model_name.starts_with("whisper-") {
+        find_whisper_dir()
     } else {
         find_model_subdir(&get_models_dir(), &model_name)
     }
