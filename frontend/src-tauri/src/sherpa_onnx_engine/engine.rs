@@ -1,7 +1,8 @@
 use anyhow::{anyhow, Result};
 use sherpa_onnx::{
     OfflineRecognizer, OfflineRecognizerConfig, OfflineSenseVoiceModelConfig,
-    OnlineRecognizer, OnlineRecognizerConfig, OnlineTransducerModelConfig,
+    OfflineWhisperModelConfig, OnlineRecognizer, OnlineRecognizerConfig,
+    OnlineTransducerModelConfig,
 };
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -12,6 +13,7 @@ use crate::win_short_path::to_short_path_string;
 #[derive(Debug, Clone, PartialEq)]
 pub enum AsrModelType {
     SenseVoice,
+    Whisper,
     XAsr,
 }
 
@@ -24,6 +26,21 @@ fn strip_verbatim_prefix(path: &Path) -> PathBuf {
     } else {
         path.to_path_buf()
     }
+}
+
+fn find_file_with_suffix(dir: &Path, suffix: &str) -> Option<PathBuf> {
+    std::fs::read_dir(dir)
+        .ok()?
+        .flatten()
+        .map(|entry| entry.path())
+        .find(|path| {
+            path.is_file()
+                && path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .map(|n| n.ends_with(suffix))
+                    .unwrap_or(false)
+        })
 }
 
 pub struct SherpaOnnxEngine {
@@ -78,8 +95,60 @@ impl SherpaOnnxEngine {
         })
     }
 
+    pub fn create_whisper(model_dir: &Path, model_name: &str) -> Result<Self> {
+        let model_dir = strip_verbatim_prefix(model_dir);
+
+        let encoder = find_file_with_suffix(&model_dir, "-encoder.int8.onnx")
+            .or_else(|| find_file_with_suffix(&model_dir, "-encoder.onnx"))
+            .ok_or_else(|| anyhow!("Whisper encoder model not found in {}", model_dir.display()))?;
+        let decoder = find_file_with_suffix(&model_dir, "-decoder.int8.onnx")
+            .or_else(|| find_file_with_suffix(&model_dir, "-decoder.onnx"))
+            .ok_or_else(|| anyhow!("Whisper decoder model not found in {}", model_dir.display()))?;
+        let tokens = find_file_with_suffix(&model_dir, "-tokens.txt")
+            .ok_or_else(|| anyhow!("Whisper tokens file not found in {}", model_dir.display()))?;
+
+        let language_pref = crate::get_language_preference_internal()
+            .filter(|l| !l.is_empty() && l != "auto")
+            .unwrap_or_default();
+
+        let mut config = OfflineRecognizerConfig::default();
+        config.model_config.whisper = OfflineWhisperModelConfig {
+            encoder: Some(to_short_path_string(&encoder)),
+            decoder: Some(to_short_path_string(&decoder)),
+            language: Some(language_pref.clone()),
+            task: Some("transcribe".to_string()),
+            tail_paddings: 0,
+            enable_token_timestamps: false,
+            enable_segment_timestamps: false,
+        };
+        config.model_config.tokens = Some(to_short_path_string(&tokens));
+        config.model_config.num_threads = 4;
+        config.model_config.provider = Some("cpu".into());
+
+        let recognizer = OfflineRecognizer::create(&config)
+            .ok_or_else(|| anyhow!("Failed to create OfflineRecognizer for Whisper"))?;
+
+        log::info!(
+            "Whisper engine loaded: {} from {} (language: {})",
+            model_name,
+            model_dir.display(),
+            if language_pref.is_empty() { "auto" } else { &language_pref }
+        );
+
+        Ok(Self {
+            recognizer: Arc::new(Mutex::new(recognizer)),
+            model_path: model_dir.to_path_buf(),
+            model_name: model_name.to_string(),
+            model_type: AsrModelType::Whisper,
+        })
+    }
+
     pub fn new(model_dir: &Path, model_name: &str) -> Result<Self> {
-        Self::create_sense_voice(model_dir, model_name)
+        if model_name.starts_with("whisper-") {
+            Self::create_whisper(model_dir, model_name)
+        } else {
+            Self::create_sense_voice(model_dir, model_name)
+        }
     }
 
     pub fn get_model_name(&self) -> &str {
@@ -94,6 +163,15 @@ impl SherpaOnnxEngine {
 
     pub fn validate_model_dir(model_dir: &Path) -> bool {
         model_dir.join("model.onnx").exists() && model_dir.join("tokens.txt").exists()
+    }
+
+    pub fn validate_whisper_model_dir(model_dir: &Path) -> bool {
+        let has_encoder = find_file_with_suffix(model_dir, "-encoder.int8.onnx").is_some()
+            || find_file_with_suffix(model_dir, "-encoder.onnx").is_some();
+        let has_decoder = find_file_with_suffix(model_dir, "-decoder.int8.onnx").is_some()
+            || find_file_with_suffix(model_dir, "-decoder.onnx").is_some();
+        let has_tokens = find_file_with_suffix(model_dir, "-tokens.txt").is_some();
+        has_encoder && has_decoder && has_tokens
     }
 }
 
