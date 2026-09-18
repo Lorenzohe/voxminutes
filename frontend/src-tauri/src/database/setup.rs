@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use sqlx::sqlite::SqlitePoolOptions;
+use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use tauri::{AppHandle, Manager};
 
 use super::manager::DatabaseManager;
@@ -35,11 +35,13 @@ pub async fn initialize_database_on_startup<R: tauri::Runtime>(
     app: &AppHandle<R>,
 ) -> Result<(), String> {
     let path = database_path();
-    let url = format!("sqlite:{}", path.to_string_lossy());
+    let options = SqliteConnectOptions::new()
+        .filename(&path)
+        .create_if_missing(true);
 
     let pool = SqlitePoolOptions::new()
         .max_connections(5)
-        .connect(&url)
+        .connect_with(options)
         .await
         .map_err(|e| e.to_string())?;
 

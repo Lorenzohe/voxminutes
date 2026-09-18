@@ -1,2 +1,5 @@
+packages:
+  - frontend
+
 allowBuilds:
   msgpackr-extract: true
