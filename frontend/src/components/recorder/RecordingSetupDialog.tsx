@@ -236,7 +236,13 @@ export function RecordingSetupDialog({ open, onOpenChange, onConfirm }: Recordin
               <select
                 className={selectCls}
                 value={language}
-                onChange={(e) => setLanguage(e.target.value)}
+                onChange={(e) => {
+                  const next = e.target.value
+                  setLanguage(next)
+                  if (next === 'it' && translationEngine !== 'hymt2') {
+                    handleEngineChange('hymt2')
+                  }
+                }}
                 disabled={isXAsr}
                 title={isXAsr ? t.recXAsrLangTitle : undefined}
               >
