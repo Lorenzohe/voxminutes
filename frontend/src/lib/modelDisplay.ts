@@ -35,7 +35,7 @@ function urlHost(url?: string | null): string | null {
 export type ModelGroup = 'asr' | 'translate' | 'summary'
 
 export function modelGroup(id: string): ModelGroup {
-  if (id === 'sense-voice' || id === 'x-asr-480ms') return 'asr'
+  if (id === 'sense-voice' || id === 'x-asr-480ms' || id.startsWith('whisper-')) return 'asr'
   if (id.startsWith('opus-mt-') || id.startsWith('hy-mt2-')) return 'translate'
   return 'summary'
 }

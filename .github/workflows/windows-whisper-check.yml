@@ -1,0 +1,97 @@
+name: Windows Whisper Italian Check
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/whisper-italian
+
+jobs:
+  whisper-check:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Parse modified Rust files
+        shell: powershell
+        run: |
+          rustfmt --edition 2021 --emit stdout frontend/src-tauri/src/sherpa_onnx_engine/engine.rs | Out-Null
+          rustfmt --edition 2021 --emit stdout frontend/src-tauri/src/sherpa_onnx_engine/commands.rs | Out-Null
+          rustfmt --edition 2021 --emit stdout frontend/src-tauri/src/translation/llm.rs | Out-Null
+          rustfmt --edition 2021 --emit stdout frontend/src-tauri/src/translation/mod.rs | Out-Null
+          rustfmt --edition 2021 --emit stdout frontend/src-tauri/src/model_download.rs | Out-Null
+
+      - name: Create standalone Whisper API smoke crate
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force .ci-whisper-smoke/src | Out-Null
+          @'
+          [package]
+          name = "whisper-api-smoke"
+          version = "0.1.0"
+          edition = "2021"
+
+          [workspace]
+
+          [dependencies]
+          sherpa-onnx = { version = "1.13", default-features = false, features = ["shared"] }
+          '@ | Set-Content -Encoding UTF8 .ci-whisper-smoke/Cargo.toml
+
+          @'
+          use sherpa_onnx::{
+              OfflineRecognizerConfig,
+              OfflineWhisperModelConfig,
+          };
+
+          fn main() {
+              let mut config = OfflineRecognizerConfig::default();
+              config.model_config.whisper = OfflineWhisperModelConfig {
+                  encoder: Some("tiny-encoder.int8.onnx".to_string()),
+                  decoder: Some("tiny-decoder.int8.onnx".to_string()),
+                  language: Some("it".to_string()),
+                  task: Some("transcribe".to_string()),
+                  tail_paddings: 300,
+                  enable_token_timestamps: false,
+                  enable_segment_timestamps: false,
+              };
+              config.model_config.tokens = Some("tiny-tokens.txt".to_string());
+              config.model_config.num_threads = 4;
+              config.model_config.provider = Some("cpu".to_string());
+              let _ = config;
+          }
+          '@ | Set-Content -Encoding UTF8 .ci-whisper-smoke/src/main.rs
+
+      - name: Compile sherpa-onnx Whisper API smoke test
+        run: cargo check --manifest-path .ci-whisper-smoke/Cargo.toml
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Isolate frontend from broken root pnpm workspace
+        shell: powershell
+        run: |
+          if (Test-Path pnpm-workspace.yaml) {
+            Move-Item pnpm-workspace.yaml pnpm-workspace.yaml.ci-disabled
+          }
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+
+      - name: TypeScript check
+        working-directory: frontend
+        run: pnpm exec tsc --noEmit

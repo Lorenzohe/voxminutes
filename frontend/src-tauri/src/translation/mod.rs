@@ -181,6 +181,23 @@ pub fn detect_source_lang(text: &str) -> &'static str {
     }
 }
 
+fn hymt2_source_lang(text: &str, asr_hint: Option<&str>) -> String {
+    // Explicit script evidence wins over a fixed ASR hint. This matters in
+    // mixed meetings: Whisper may be configured as Italian while a Chinese
+    // participant speaks for one segment.
+    let detected = detect_source_lang(text);
+    if matches!(detected, "zh" | "ja" | "ko") {
+        return detected.to_string();
+    }
+
+    match asr_hint {
+        Some(lang @ ("it" | "fr" | "de" | "es" | "pt" | "ru" | "ja" | "ko" | "zh" | "en")) => {
+            lang.to_string()
+        }
+        _ => detected.to_string(),
+    }
+}
+
 // ── Realtime translation queue ────────────────────────────────────────────────
 
 #[derive(Debug, Clone)]
@@ -231,8 +248,12 @@ pub struct TranslateUpdate {
 /// 支持时也返回 None（跳过）。
 fn resolve_direction(text: &str, target: &str) -> Option<(String, String, String)> {
     if current_engine() == "hymt2" {
-        // Hy-MT2 LLM 引擎：13 种语言互译，源语言按文本特征检测
-        let source_lang = detect_source_lang(text);
+        // Hy-MT2 LLM 引擎：优先使用 ASR 明确提供的语言提示。
+        // 拉丁字母语言仅靠字符特征无法可靠区分（例如意大利语会被误判为英语），
+        // 因此录音场景里 language=it 应直接驱动 it -> target 翻译。
+        let asr_hint = crate::get_language_preference_internal()
+            .filter(|lang| lang != "auto" && !lang.is_empty());
+        let source_lang = hymt2_source_lang(text, asr_hint.as_deref());
         // 兼容存量 "auto"：按 home 的默认目标解析
         let effective_target: String = if target == "auto" {
             default_target_for_home(&home_lang())
@@ -246,7 +267,7 @@ fn resolve_direction(text: &str, target: &str) -> Option<(String, String, String
         }
         Some((
             format!("{}-{}", source_lang, effective_target),
-            source_lang.to_string(),
+            source_lang,
             effective_target,
         ))
     } else {
@@ -450,6 +471,25 @@ mod tests {
         assert_eq!(detect_source_lang("Bonjour le monde"), "en");
         // 汉字占比不足 30% 时回落 en
         assert_eq!(detect_source_lang("abcdefgh 中"), "en");
+    }
+
+    #[test]
+    fn hymt2_source_lang_script_overrides_fixed_italian_hint() {
+        assert_eq!(hymt2_source_lang("这是中国工程师的回答", Some("it")), "zh");
+        assert_eq!(hymt2_source_lang("これは日本語です", Some("it")), "ja");
+        assert_eq!(hymt2_source_lang("안녕하세요", Some("it")), "ko");
+    }
+
+    #[test]
+    fn hymt2_source_lang_uses_italian_hint_for_latin_text() {
+        assert_eq!(
+            hymt2_source_lang("Questa e una prova di traduzione.", Some("it")),
+            "it"
+        );
+        assert_eq!(
+            hymt2_source_lang("Questa e una prova di traduzione.", None),
+            "en"
+        );
     }
 
     // resolve_direction 测试需要改全局静态（引擎/home），用互斥锁串行化，
