@@ -15,6 +15,22 @@ fn database_path() -> PathBuf {
     dir.join("voxminutes.db")
 }
 
+async fn run_migrations(pool: &sqlx::SqlitePool) -> Result<(), String> {
+    let schema = include_str!("../../migrations/20260717000000_mvp_initial_schema.sql");
+
+    for statement in schema.split(';') {
+        let statement = statement.trim();
+        if !statement.is_empty() {
+            sqlx::query(statement)
+                .execute(pool)
+                .await
+                .map_err(|e| e.to_string())?;
+        }
+    }
+
+    Ok(())
+}
+
 pub async fn initialize_database_on_startup<R: tauri::Runtime>(
     app: &AppHandle<R>,
 ) -> Result<(), String> {
@@ -31,6 +47,8 @@ pub async fn initialize_database_on_startup<R: tauri::Runtime>(
         .execute(&pool)
         .await
         .map_err(|e| e.to_string())?;
+
+    run_migrations(&pool).await?;
 
     let manager = DatabaseManager::new(pool);
 
