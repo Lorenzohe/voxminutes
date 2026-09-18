@@ -110,8 +110,7 @@
             "resources-dll/onnxruntime_providers_shared.dll": "onnxruntime_providers_shared.dll",
             "resources-dll/sherpa-onnx-c-api.dll": "sherpa-onnx-c-api.dll",
             "resources-dll/sherpa-onnx-cxx-api.dll": "sherpa-onnx-cxx-api.dll",
-            "templates/*.json": "templates/",
-            "example_audio.wav": "example_audio.wav"
+            "templates/*.json": "templates/"
         },
         "externalBin": [
             "binaries/ffmpeg",
