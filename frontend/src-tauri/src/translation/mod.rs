@@ -347,16 +347,8 @@ fn resolve_direction(text: &str, target: &str) -> Option<(String, String, String
         let asr_hint = crate::get_language_preference_internal()
             .filter(|lang| lang != "auto" && !lang.is_empty());
         if asr_hint.as_deref() == Some("it") && !is_chinese_dominant(text) {
-            let effective_target = if target == "auto" { "zh" } else { target };
-            return match effective_target {
-                "en" => Some(("it-en".to_string(), "it".to_string(), "en".to_string())),
-                "zh" => Some((
-                    "it-zh-via-en".to_string(),
-                    "it".to_string(),
-                    "zh".to_string(),
-                )),
-                _ => None,
-            };
+            log::warn!("Italian realtime translation requires Hy-MT2; OPUS Italian chain is disabled");
+            return None;
         }
 
         let source_is_zh = is_chinese_dominant(text);
@@ -424,6 +416,12 @@ pub fn queue_partial_translation<R: Runtime>(
     sequence_id: u64,
 ) {
     if !TRANSLATION_ENABLED.load(Ordering::SeqCst) {
+        return;
+    }
+    // LLM/multilingual experimental engines are too expensive for 4-second
+    // Whisper previews on CPU. Translate committed finals only so ASR keeps
+    // priority and the translation queue cannot starve Whisper.
+    if matches!(current_engine().as_str(), "hymt2" | "m2m100") {
         return;
     }
     let text = text.trim().to_string();
@@ -575,14 +573,7 @@ pub async fn process_pending_translations<R: Runtime>(app: AppHandle<R>) {
                         .map_err(|e| e.to_string())
                 })
             } else if direction_for_task == "it-zh-via-en" {
-                let it_en = get_engine("it-en")?;
-                let english = it_en
-                    .translate_greedy(&text)
-                    .map_err(|e| e.to_string())?;
-                let en_zh = get_engine("en-zh")?;
-                en_zh
-                    .translate_greedy(&english)
-                    .map_err(|e| e.to_string())
+                Err("Italian OPUS chain disabled; use Hy-MT2".to_string())
             } else {
                 get_engine(&direction_for_task).and_then(|engine| {
                     engine.translate_greedy(&text).map_err(|e| e.to_string())

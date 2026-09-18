@@ -331,10 +331,7 @@ impl ModelState {
         // Calculate thread count (conservative default: max(1, (Cores / 2) + 2))
         // This ensures the UI thread is never starved
         let threads: i32 = std::thread::available_parallelism()
-            .map(|n| {
-                let cores = n.get() as i32;
-                ((cores / 2) + 2).max(1)
-            })
+            .map(|n| (n.get() as i32).min(3).max(1))
             .unwrap_or(2);
 
         // Persistent context, created once per model/context_size so the KV

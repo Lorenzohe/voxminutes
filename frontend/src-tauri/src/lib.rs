@@ -621,7 +621,7 @@ pub fn run() {
                     (engine, lang, home)
                 });
                 if let Some(engine) =
-                    saved_engine.filter(|e| matches!(e.as_str(), "opus" | "m2m100" | "hymt2"))
+                    saved_engine.filter(|e| matches!(e.as_str(), "opus" | "hymt2"))
                 {
                     if let Ok(mut guard) = translation::TRANSLATION_ENGINE.lock() {
                         *guard = engine;

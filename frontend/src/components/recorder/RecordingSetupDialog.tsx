@@ -244,8 +244,8 @@ export function RecordingSetupDialog({ open, onOpenChange, onConfirm }: Recordin
                   const next = e.target.value
                   setLanguage(next)
                   if (next === 'it') {
-                    if (translationEngine !== 'opus') {
-                      handleEngineChange('opus')
+                    if (translationEngine !== 'hymt2') {
+                      handleEngineChange('hymt2')
                     }
                     const target = home === 'en' ? 'en' : 'zh'
                     if (translateTargetLang !== target) {
@@ -297,7 +297,7 @@ export function RecordingSetupDialog({ open, onOpenChange, onConfirm }: Recordin
                     value={translationEngine}
                     onChange={(e) => handleEngineChange(e.target.value as TranslationEngine)}
                   >
-                    <option value="opus">{t.recEngineOpus} · Italiano → 中文</option>
+                    <option value="opus">{t.recEngineOpus}</option>
                     <option value="hymt2">{t.recEngineHymt2}</option>
                   </select>
                 </label>

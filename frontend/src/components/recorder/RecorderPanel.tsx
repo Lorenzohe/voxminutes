@@ -77,8 +77,8 @@ function useRecorderInit() {
     ])
       .then(([engine]) => {
         if (engine === 'm2m100') {
-          useAppStore.getState().setTranslationEngine('opus')
-          ipcSetTranslationEngine('opus').catch(() => {})
+          useAppStore.getState().setTranslationEngine('hymt2')
+          ipcSetTranslationEngine('hymt2').catch(() => {})
         } else if (engine) {
           useAppStore.getState().setTranslationEngine(engine)
         }
@@ -234,7 +234,7 @@ export function RecorderControls() {
                 onChange={(e) => handleEngineChange(e.target.value as TranslationEngine)}
                 title={t.recTranslateEngine}
               >
-                <option value="opus">{t.recEngineOpus} · Italiano → 中文</option>
+                <option value="opus">{t.recEngineOpus}</option>
                 <option value="hymt2">{t.recEngineHymt2}</option>
               </select>
             </>
