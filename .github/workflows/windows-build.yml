@@ -1,3 +1,4 @@
+# Windows release build workflow
 name: Windows Build
 
 on:
