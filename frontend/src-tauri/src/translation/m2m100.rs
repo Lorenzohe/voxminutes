@@ -54,7 +54,10 @@ fn sanitize_bpe_merges(value: &mut serde_json::Value) -> usize {
     merges.retain(|entry| {
         let pair: Option<(&str, &str)> = match entry {
             serde_json::Value::Array(parts) if parts.len() == 2 => {
-                Some((parts[0].as_str()?, parts[1].as_str()?))
+                match (parts[0].as_str(), parts[1].as_str()) {
+                    (Some(left), Some(right)) => Some((left, right)),
+                    _ => None,
+                }
             }
             serde_json::Value::String(rule) => rule
                 .split_once(' ')
