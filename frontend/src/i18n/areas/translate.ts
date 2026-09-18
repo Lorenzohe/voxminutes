@@ -14,6 +14,7 @@ export interface TranslateMessages {
   trLangEs: string
   trLangRu: string
   trLangPt: string
+  trLangIt: string
   trLangZhHant: string
   trLangYue: string
   trLangTh: string
@@ -53,6 +54,7 @@ export const TRANSLATE_MESSAGES: Record<Language, TranslateMessages> = {
     trLangEs: 'Spanish',
     trLangRu: 'Russian',
     trLangPt: 'Portuguese',
+    trLangIt: 'Italian',
     trLangZhHant: 'Traditional Chinese',
     trLangYue: 'Cantonese',
     trLangTh: 'Thai',
@@ -90,6 +92,7 @@ export const TRANSLATE_MESSAGES: Record<Language, TranslateMessages> = {
     trLangEs: '西班牙语',
     trLangRu: '俄语',
     trLangPt: '葡萄牙语',
+    trLangIt: '意大利语',
     trLangZhHant: '繁体中文',
     trLangYue: '粤语',
     trLangTh: '泰语',
@@ -127,6 +130,7 @@ export const TRANSLATE_MESSAGES: Record<Language, TranslateMessages> = {
     trLangEs: '스페인어',
     trLangRu: '러시아어',
     trLangPt: '포르투갈어',
+    trLangIt: '이탈리아어',
     trLangZhHant: '번체 중국어',
     trLangYue: '광둥어',
     trLangTh: '태국어',
@@ -164,6 +168,7 @@ export const TRANSLATE_MESSAGES: Record<Language, TranslateMessages> = {
     trLangEs: 'スペイン語',
     trLangRu: 'ロシア語',
     trLangPt: 'ポルトガル語',
+    trLangIt: 'イタリア語',
     trLangZhHant: '繁体字中国語',
     trLangYue: '広東語',
     trLangTh: 'タイ語',

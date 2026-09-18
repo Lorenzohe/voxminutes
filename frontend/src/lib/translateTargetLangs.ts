@@ -14,6 +14,7 @@ export const HYMT2_TARGET_LANGS = [
   'es',
   'ru',
   'pt',
+  'it',
   'zh-Hant',
   'yue',
   'th',
@@ -51,6 +52,8 @@ export function translateTargetLangLabel(code: string, t: Messages): string {
       return t.trLangRu
     case 'pt':
       return t.trLangPt
+    case 'it':
+      return t.trLangIt
     case 'zh-Hant':
       return t.trLangZhHant
     case 'yue':

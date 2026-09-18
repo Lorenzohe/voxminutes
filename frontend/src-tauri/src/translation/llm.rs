@@ -1,6 +1,6 @@
 // translation/llm.rs
 //
-// Hy-MT2 GGUF 翻译引擎（13 种常用语言互译），通过共享 llama-helper sidecar
+// Hy-MT2 GGUF 翻译引擎（14 种常用语言互译），通过共享 llama-helper sidecar
 // （crate::llama_sidecar）推理。Prompt 模板、采样参数与输出清洗移植自
 // 参考实现 reference_code/backend/app/translate_engine.py。
 
@@ -494,6 +494,8 @@ mod tests {
         assert_eq!(parse_direction("zh-Hant-en"), Some(("zh-Hant", "en")));
         assert_eq!(parse_direction("en-zh-Hant"), Some(("en", "zh-Hant")));
         assert_eq!(parse_direction("yue-zh"), Some(("yue", "zh")));
+        assert_eq!(parse_direction("it-zh"), Some(("it", "zh")));
+        assert_eq!(parse_direction("it-en"), Some(("it", "en")));
         // 未知 code / 缺少 tgt 均拒绝
         assert_eq!(parse_direction("zh"), None);
         assert_eq!(parse_direction("zh-xx"), None);
@@ -519,6 +521,22 @@ mod tests {
     fn build_prompt_normal_zh_hant_target_uses_chinese_instruction() {
         let p = build_prompt("bonjour", "fr", "zh-Hant", false);
         assert!(p.contains("Translate the following text into Traditional Chinese."));
+    }
+
+    #[test]
+    fn build_prompt_asr_italian_to_chinese() {
+        let p = build_prompt("Ciao, come stai?", "it", "zh", true);
+        assert!(p.contains("将以下Italian语音转录文本翻译为Chinese。"));
+        assert!(p.contains("Source: Ciao, come stai?"));
+        assert!(p.contains("Target (Chinese):"));
+    }
+
+    #[test]
+    fn build_prompt_asr_italian_to_english() {
+        let p = build_prompt("Ciao, come stai?", "it", "en", true);
+        assert!(p.contains("Translate the following Italian spoken transcript into English."));
+        assert!(p.contains("Source: Ciao, come stai?"));
+        assert!(p.contains("Target (English):"));
     }
 
     #[test]
