@@ -37,8 +37,102 @@ impl SherpaOnnxProvider {
             .get_result()
             .ok_or_else(|| TranscriptionError::EngineFailed("No result".into()))?;
 
-        Ok(result.text.trim().to_string())
+        let text = result.text.trim().to_string();
+        if self.engine.get_model_type() == crate::sherpa_onnx_engine::AsrModelType::Whisper {
+            Ok(truncate_whisper_repetition_loop(&text))
+        } else {
+            Ok(text)
+        }
     }
+}
+
+/// Whisper occasionally falls into a token/short-phrase repetition loop on
+/// difficult audio (e.g. "non non non..." or "in forma in forma...").
+/// Detect conservative, clearly pathological runs and keep only the first
+/// occurrence. This happens before transcript emission, so UI/export/translation
+/// all receive the same cleaned text.
+fn truncate_whisper_repetition_loop(text: &str) -> String {
+    let tokens: Vec<&str> = text.split_whitespace().collect();
+    if tokens.len() < 8 {
+        return text.trim().to_string();
+    }
+
+    let normalized: Vec<String> = tokens
+        .iter()
+        .map(|token| {
+            token
+                .chars()
+                .filter(|c| c.is_alphanumeric() || *c == '\'' || *c == '’')
+                .flat_map(|c| c.to_lowercase())
+                .collect::<String>()
+        })
+        .collect();
+
+    let mut best: Option<(usize, usize, usize)> = None;
+
+    for start in 0..tokens.len() {
+        let max_phrase = 5usize.min((tokens.len() - start) / 2);
+        for phrase_len in 1..=max_phrase {
+            let phrase = &normalized[start..start + phrase_len];
+            if phrase.iter().any(|t| t.is_empty()) {
+                continue;
+            }
+
+            let min_repeats = match phrase_len {
+                1 => 8,
+                2 => 6,
+                3 => 5,
+                _ => 4,
+            };
+
+            let mut repeats = 1usize;
+            while start + (repeats + 1) * phrase_len <= normalized.len() {
+                let next_start = start + repeats * phrase_len;
+                let next_end = next_start + phrase_len;
+                if normalized[next_start..next_end] == *phrase {
+                    repeats += 1;
+                } else {
+                    break;
+                }
+            }
+
+            if repeats >= min_repeats {
+                let candidate = (start, phrase_len, repeats);
+                best = match best {
+                    None => Some(candidate),
+                    Some(current) => {
+                        // Prefer the earliest loop. At the same position prefer
+                        // the run covering more repeated tokens.
+                        let current_coverage = current.1 * current.2;
+                        let candidate_coverage = phrase_len * repeats;
+                        if start < current.0
+                            || (start == current.0 && candidate_coverage > current_coverage)
+                        {
+                            Some(candidate)
+                        } else {
+                            Some(current)
+                        }
+                    }
+                };
+            }
+        }
+    }
+
+    let Some((start, phrase_len, repeats)) = best else {
+        return text.trim().to_string();
+    };
+
+    let keep_end = start + phrase_len;
+    let cleaned = tokens[..keep_end].join(" ");
+    warn!(
+        "Whisper repetition loop detected: start_token={}, phrase_len={}, repeats={}, original_tokens={}, cleaned_tokens={}",
+        start,
+        phrase_len,
+        repeats,
+        tokens.len(),
+        keep_end
+    );
+    cleaned
 }
 
 /// Remove the longest common suffix/prefix overlap between `prev` and `next`.
@@ -187,6 +281,36 @@ impl TranscriptionProvider for SherpaOnnxProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_whisper_repetition_single_word_loop_is_truncated() {
+        let input = "non non non non non non non non non non non non";
+        assert_eq!(truncate_whisper_repetition_loop(input), "non");
+    }
+
+    #[test]
+    fn test_whisper_repetition_phrase_loop_is_truncated() {
+        let input = "Non vi ho in un'altra forma in forma in forma in forma in forma in forma in forma in forma";
+        assert_eq!(
+            truncate_whisper_repetition_loop(input),
+            "Non vi ho in un'altra forma"
+        );
+    }
+
+    #[test]
+    fn test_whisper_repetition_punctuation_is_normalized() {
+        let input = "inizio in forma, in forma, in forma, in forma, in forma, in forma, fine";
+        assert_eq!(
+            truncate_whisper_repetition_loop(input),
+            "inizio in forma,"
+        );
+    }
+
+    #[test]
+    fn test_whisper_legitimate_small_repetition_is_kept() {
+        let input = "no no no, aspetta, non e quello che intendo";
+        assert_eq!(truncate_whisper_repetition_loop(input), input);
+    }
 
     #[test]
     fn test_remove_text_overlap_basic() {

@@ -123,7 +123,7 @@ impl SherpaOnnxEngine {
             decoder: Some(to_short_path_string(&decoder)),
             language: whisper_language,
             task: Some("transcribe".to_string()),
-            tail_paddings: 300,
+            tail_paddings: -1,
             enable_token_timestamps: false,
             enable_segment_timestamps: false,
         };
