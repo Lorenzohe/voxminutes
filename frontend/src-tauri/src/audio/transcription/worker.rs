@@ -112,6 +112,7 @@ pub fn start_transcription_task<R: Runtime>(
                     .unwrap_or_else(|| "unknown".to_string());
 
                 let whisper_live_mode = current_model.starts_with("whisper-");
+                let mut last_whisper_final_text = String::new();
 
                 if initial_model_loaded {
                     info!(
@@ -179,7 +180,20 @@ pub fn start_transcription_task<R: Runtime>(
                             match transcribe_chunk_with_provider(&engine_clone, chunk, &app_clone).await {
                                 Ok((transcript, confidence_opt, is_partial)) => {
                                     let is_partial = is_partial || requested_partial;
+                                    let transcript = if whisper_live_mode
+                                        && !last_whisper_final_text.is_empty()
+                                    {
+                                        strip_whisper_cross_segment_overlap(
+                                            &last_whisper_final_text,
+                                            &transcript,
+                                        )
+                                    } else {
+                                        transcript
+                                    };
                                     if !transcript.trim().is_empty() {
+                                        if whisper_live_mode && !is_partial {
+                                            last_whisper_final_text = transcript.clone();
+                                        }
                                         info!("✅ Worker {} transcribed: {} (confidence: {:?}, partial: {})",
                                               worker_id, transcript, confidence_opt, is_partial);
 
@@ -428,6 +442,44 @@ fn split_long_chunk(chunk: AudioChunk) -> Vec<AudioChunk> {
         .collect()
 }
 
+/// Remove audio-overlap text between two finalized Whisper live windows.
+/// We require at least two matching words, or one long word, to avoid deleting
+/// legitimate short repetitions such as "no, no".
+fn strip_whisper_cross_segment_overlap(prev: &str, next: &str) -> String {
+    fn normalize_word(word: &str) -> String {
+        word.chars()
+            .filter(|c| c.is_alphanumeric() || *c == '\'' || *c == '’')
+            .flat_map(|c| c.to_lowercase())
+            .collect()
+    }
+
+    let prev_words: Vec<&str> = prev.split_whitespace().collect();
+    let next_words: Vec<&str> = next.split_whitespace().collect();
+    if prev_words.is_empty() || next_words.is_empty() {
+        return next.trim().to_string();
+    }
+
+    let max_overlap = 12usize.min(prev_words.len()).min(next_words.len());
+    for len in (1..=max_overlap).rev() {
+        let prev_slice = &prev_words[prev_words.len() - len..];
+        let next_slice = &next_words[..len];
+        let matches = prev_slice
+            .iter()
+            .zip(next_slice.iter())
+            .all(|(a, b)| normalize_word(a) == normalize_word(b));
+        if !matches {
+            continue;
+        }
+
+        let safe_single_word = len == 1 && normalize_word(next_slice[0]).chars().count() >= 6;
+        if len >= 2 || safe_single_word {
+            return next_words[len..].join(" ").trim().to_string();
+        }
+    }
+
+    next.trim().to_string()
+}
+
 /// Transcribe audio chunk using the Sherpa-ONNX provider
 async fn transcribe_chunk_with_provider<R: Runtime>(
     engine: &TranscriptionEngine,
@@ -490,6 +542,41 @@ async fn transcribe_chunk_with_provider<R: Runtime>(
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod live_whisper_tests {
+    use super::strip_whisper_cross_segment_overlap;
+
+    #[test]
+    fn strips_two_word_overlap() {
+        assert_eq!(
+            strip_whisper_cross_segment_overlap(
+                "Vorrei sapere se possiamo modificare questa macchina",
+                "questa macchina per migliorare la produzione"
+            ),
+            "per migliorare la produzione"
+        );
+    }
+
+    #[test]
+    fn keeps_short_legitimate_repeat() {
+        assert_eq!(
+            strip_whisper_cross_segment_overlap("No", "No non e corretto"),
+            "No non e corretto"
+        );
+    }
+
+    #[test]
+    fn strips_long_single_word_overlap() {
+        assert_eq!(
+            strip_whisper_cross_segment_overlap(
+                "dobbiamo controllare alimentazione",
+                "alimentazione della macchina"
+            ),
+            "della macchina"
+        );
     }
 }
 
