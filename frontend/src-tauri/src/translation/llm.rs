@@ -60,7 +60,7 @@ const LANG_TABLE: &[(&str, &str, &str)] = &[
 
 /// 支持的目标语言代码（"auto" 之外），供 mod.rs/commands.rs 校验用。
 pub(crate) const SUPPORTED_TARGET_LANGS: &[&str] = &[
-    "zh", "en", "ja", "ko", "fr", "de", "es", "ru", "pt", "zh-Hant", "yue", "th", "vi",
+    "zh", "en", "ja", "ko", "fr", "de", "es", "ru", "pt", "it", "zh-Hant", "yue", "th", "vi",
 ];
 
 /// 语言名表：(中文名, 英文名)；未知 code 返回空串。
