@@ -24,6 +24,16 @@ jobs:
         shell: powershell
         run: choco install llvm --no-progress -y
 
+      - name: Create CI-only FFmpeg build stub
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force frontend/src-tauri/build | Out-Null
+          @'
+          pub fn ensure_ffmpeg_binary() {
+              println!("cargo:warning=CI check: skipping FFmpeg bundling");
+          }
+          '@ | Set-Content -Encoding UTF8 frontend/src-tauri/build/ffmpeg.rs
+
       - name: Rust check
         run: cargo check -p voxminutes
 
