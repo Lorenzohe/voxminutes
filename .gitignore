@@ -27,7 +27,7 @@ venv/
 *.env
 .venv-onnx/
 
-# Models (large files) — 仅根目录的模型目录，勿误伤前端同名目录
+# Models (large files)
 /models/
 /models-beifen/
 *.onnx
@@ -73,50 +73,48 @@ Thumbs.db
 *.temp
 *.cache
 
-# Local Rust toolchain config (contains machine-specific absolute paths / registry mirror)
+# Local Rust toolchain config
 .cargo/
 
-# Unused icon set copied from reference project (app uses lucide-react; not referenced anywhere)
+# Unused icon set
 frontend/public/icons/
 
-# Generated benchmark outputs (regenerate via scripts/benchmark_translation_models.py)
+# Generated benchmark outputs
 scripts/translation_benchmark_results.json
 scripts/translation_benchmark_results.md
 
-# 打包用运行时 DLL（从 target/debug 复制，体积大且随构建变化）
-frontend/src-tauri/resources-dll/
-
-# 本地开发工具（LLVM/libclang 等，勿提交）
+# Local development tools
 .tooling/
 
-# 内部交接文档（含项目来历与本机路径，不公开）
+# Internal documents
 HANDOVER.md
 
-# MVP 运行时已不使用的遗留 Python 后端（源自内部项目，暂不上传）
+# Legacy backend
 backend/
 
-# 本地上传临时目录
+# Temporary uploads
 .uploads/
 
-# 旧架构（Python 后端时代）打包/工具脚本，已过时；新打包脚本后续重写
+# Old scripts
 scripts/add-python-runtime.ps1
 scripts/assemble-portable-package.ps1
 scripts/benchmark_translation_models.py
 
-# 开发环境工具产物（kilocode 插件声明，与产品无关）
-/package.json
-/pnpm-lock.yaml
-
-# 内部测试/更新工具（MVP 不启用 updater）
-scripts/inject_transcript.py
-scripts/generate-update-manifest-github.js
-scripts/test-update-locally.js
-
-# 本地视频处理/推广工具产物（ffmpeg、剪映安装器、中间帧等，勿提交）
+# Local tools
 .tools/
-
-# 本地工作记忆（WorkBuddy 项目记忆，不公开）
 .workbuddy/
 
-# 另一 AI 生成的推广素材目录（含 13MB 原始录屏，如需公开再单独提交）
 docs/promotion/
+
+# -------------------------------------------------
+# VoxMinutes release runtime assets
+# Required by Tauri Windows bundle
+# -------------------------------------------------
+
+# Keep normal exe files ignored, except release sidecar
+!frontend/src-tauri/binaries/
+!frontend/src-tauri/binaries/*.exe
+
+# Keep runtime DLL resources
+!frontend/src-tauri/resources-dll/
+!frontend/src-tauri/resources-dll/*.dll
