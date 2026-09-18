@@ -111,13 +111,19 @@ impl SherpaOnnxEngine {
             .filter(|l| !l.is_empty() && l != "auto")
             .unwrap_or_default();
 
+        let whisper_language = if language_pref.is_empty() {
+            None
+        } else {
+            Some(language_pref.clone())
+        };
+
         let mut config = OfflineRecognizerConfig::default();
         config.model_config.whisper = OfflineWhisperModelConfig {
             encoder: Some(to_short_path_string(&encoder)),
             decoder: Some(to_short_path_string(&decoder)),
-            language: Some(language_pref.clone()),
+            language: whisper_language,
             task: Some("transcribe".to_string()),
-            tail_paddings: 0,
+            tail_paddings: 300,
             enable_token_timestamps: false,
             enable_segment_timestamps: false,
         };
