@@ -231,8 +231,24 @@ pub struct TranslateUpdate {
 /// 支持时也返回 None（跳过）。
 fn resolve_direction(text: &str, target: &str) -> Option<(String, String, String)> {
     if current_engine() == "hymt2" {
-        // Hy-MT2 LLM 引擎：13 种语言互译，源语言按文本特征检测
-        let source_lang = detect_source_lang(text);
+        // Hy-MT2 LLM 引擎：优先使用 ASR 明确提供的语言提示。
+        // 拉丁字母语言仅靠字符特征无法可靠区分（例如意大利语会被误判为英语），
+        // 因此录音场景里 language=it 应直接驱动 it -> target 翻译。
+        let asr_hint = crate::get_language_preference_internal()
+            .filter(|lang| lang != "auto" && !lang.is_empty());
+        let source_lang = match asr_hint.as_deref() {
+            Some("it") => "it",
+            Some("fr") => "fr",
+            Some("de") => "de",
+            Some("es") => "es",
+            Some("pt") => "pt",
+            Some("ru") => "ru",
+            Some("ja") => "ja",
+            Some("ko") => "ko",
+            Some("zh") => "zh",
+            Some("en") => "en",
+            _ => detect_source_lang(text),
+        };
         // 兼容存量 "auto"：按 home 的默认目标解析
         let effective_target: String = if target == "auto" {
             default_target_for_home(&home_lang())
