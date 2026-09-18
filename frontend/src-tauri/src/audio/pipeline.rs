@@ -15,8 +15,8 @@ use super::vad::{ContinuousVadProcessor, SpeechSegment};
 
 pub(crate) const WHISPER_PARTIAL_CHUNK_FLAG: u64 = 1u64 << 63;
 const WHISPER_PREVIEW_INTERVAL_SAMPLES: usize = 4 * 16000;
-const WHISPER_MAX_LIVE_SEGMENT_SAMPLES: usize = 15 * 16000;
-const WHISPER_ROLLOVER_OVERLAP_SAMPLES: usize = 24_000; // 1.5s at 16kHz
+const WHISPER_MAX_LIVE_SEGMENT_SAMPLES: usize = 26 * 16000;
+const WHISPER_ROLLOVER_OVERLAP_SAMPLES: usize = 32_000; // 2.0s at 16kHz
 
 /// Ring buffer for synchronized audio mixing
 /// Accumulates samples from mic and system streams until we have aligned windows
@@ -938,8 +938,10 @@ impl AudioPipeline {
 
         let current_len = self.vad_processor.current_speech_len_samples();
 
-        // Safety boundary for truly continuous speech. Finalize a <=15s window
-        // but keep 1.5s audio overlap so the next window retains linguistic context.
+        // Safety boundary for truly continuous speech. Partial subtitles keep updating
+        // every 4s, so we can wait until 26s before a forced final. This stays
+        // below Whisper's 30s window while greatly reducing mid-sentence cuts.
+        // Keep 2s overlap so the next window retains linguistic context.
         if current_len >= WHISPER_MAX_LIVE_SEGMENT_SAMPLES {
             if let Some(segment) = self
                 .vad_processor

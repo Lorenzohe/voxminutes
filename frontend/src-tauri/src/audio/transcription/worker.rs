@@ -65,6 +65,11 @@ pub fn start_transcription_task<R: Runtime>(
 
         let engine_name = transcription_engine.provider_name();
         info!("Using transcription engine: {}", engine_name);
+        let active_model_name = transcription_engine
+            .get_current_model()
+            .await
+            .unwrap_or_else(|| "unknown".to_string());
+        let whisper_live_mode = active_model_name.starts_with("whisper-");
 
         // ── X-ASR streaming branch (bypasses chunk worker) ──
         if engine_name == "x-asr" {
@@ -102,6 +107,7 @@ pub fn start_transcription_task<R: Runtime>(
             let chunks_completed_clone = chunks_completed.clone();
             let input_finished_clone = input_finished.clone();
             let chunks_queued_clone = chunks_queued.clone();
+            let whisper_live_mode = whisper_live_mode;
 
             let worker_handle = tokio::spawn(async move {
                 info!("👷 Worker {} started", worker_id);
@@ -359,7 +365,7 @@ pub fn start_transcription_task<R: Runtime>(
         'dispatch: while let Some(chunk) = receiver.recv().await {
             // Split over-long VAD segments so SenseVoice commits text
             // incrementally instead of as one huge block (see split_long_chunk)
-            for chunk in split_long_chunk(chunk) {
+            for chunk in split_long_chunk(chunk, whisper_live_mode) {
                 let queued = chunks_queued.fetch_add(1, Ordering::SeqCst) + 1;
                 info!(
                     "📥 Dispatching chunk {} to workers (total queued: {})",
@@ -426,20 +432,27 @@ pub fn start_transcription_task<R: Runtime>(
 /// with BGM, where silero can emit a single 60s+ segment) would surface as one
 /// huge block of text and translation. Split anything longer at low-energy
 /// points so results stream out incrementally.
-const MAX_TRANSCRIPTION_SEGMENT_SAMPLES: usize = 15 * 16000; // 15s at 16kHz
+const MAX_TRANSCRIPTION_SEGMENT_SAMPLES: usize = 15 * 16000; // SenseVoice: 15s
+const MAX_WHISPER_TRANSCRIPTION_SEGMENT_SAMPLES: usize = 29 * 16000; // below Whisper 30s window
 
-/// Split an over-long VAD chunk into ≤15s sub-chunks at low-energy points.
-/// Sub-chunks carry corrected timestamps so transcript/translation segments get
-/// proper audio time ranges. Short chunks pass through unchanged (resampled to
-/// 16kHz if needed, so the worker skips its own resampling).
-fn split_long_chunk(chunk: AudioChunk) -> Vec<AudioChunk> {
+/// Split an over-long VAD chunk at low-energy points. SenseVoice keeps the old
+/// 15s limit. Whisper live snapshots/finals are allowed up to 29s; otherwise a
+/// 16s snapshot would be split into 15s + 1s with the same sequence_id and the
+/// tiny tail would overwrite the complete partial subtitle.
+fn split_long_chunk(chunk: AudioChunk, whisper_live_mode: bool) -> Vec<AudioChunk> {
     let data = if chunk.sample_rate != 16000 {
         crate::audio::audio_processing::resample_audio(&chunk.data, chunk.sample_rate, 16000)
     } else {
         chunk.data
     };
 
-    if data.len() <= MAX_TRANSCRIPTION_SEGMENT_SAMPLES {
+    let max_segment_samples = if whisper_live_mode {
+        MAX_WHISPER_TRANSCRIPTION_SEGMENT_SAMPLES
+    } else {
+        MAX_TRANSCRIPTION_SEGMENT_SAMPLES
+    };
+
+    if data.len() <= max_segment_samples {
         return vec![AudioChunk {
             data,
             sample_rate: 16000,
@@ -455,7 +468,7 @@ fn split_long_chunk(chunk: AudioChunk) -> Vec<AudioChunk> {
         confidence: 1.0,
     };
     let parts =
-        crate::audio::common::split_segment_at_silence(&segment, MAX_TRANSCRIPTION_SEGMENT_SAMPLES);
+        crate::audio::common::split_segment_at_silence(&segment, max_segment_samples);
     info!(
         "✂️ Split long VAD segment {:.1}s → {} parts",
         duration_s,
