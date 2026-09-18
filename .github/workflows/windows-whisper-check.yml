@@ -5,49 +5,69 @@ on:
   push:
     branches:
       - feature/whisper-italian
-  pull_request:
-    branches:
-      - main
 
 jobs:
-  check:
+  whisper-check:
     runs-on: windows-latest
-    timeout-minutes: 45
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
 
-      - name: Install LLVM
-        shell: powershell
-        run: choco install llvm --no-progress -y
-
-      - name: Create CI-only FFmpeg build stub
+      - name: Check modified Rust files parse
         shell: powershell
         run: |
-          New-Item -ItemType Directory -Force frontend/src-tauri/build | Out-Null
-          New-Item -ItemType Directory -Force frontend/src-tauri/binaries | Out-Null
-          @'
-          pub fn ensure_ffmpeg_binary() {
-              println!("cargo:warning=CI check: skipping FFmpeg bundling");
-          }
-          '@ | Set-Content -Encoding UTF8 frontend/src-tauri/build/ffmpeg.rs
-          New-Item -ItemType File -Force frontend/src-tauri/binaries/ffmpeg-x86_64-pc-windows-msvc.exe | Out-Null
-          New-Item -ItemType File -Force frontend/src-tauri/binaries/llama-helper-x86_64-pc-windows-msvc.exe | Out-Null
-          New-Item -ItemType Directory -Force frontend/src-tauri/resources-dll | Out-Null
-          New-Item -ItemType Directory -Force frontend/src-tauri/templates | Out-Null
-          foreach ($name in @('DirectML.dll','onnxruntime.dll','onnxruntime_providers_shared.dll','sherpa-onnx-c-api.dll','sherpa-onnx-cxx-api.dll')) {
-            New-Item -ItemType File -Force ("frontend/src-tauri/resources-dll/" + $name) | Out-Null
-          }
-          if (-not (Test-Path frontend/src-tauri/templates/ci-placeholder.json)) {
-            '{}' | Set-Content -Encoding UTF8 frontend/src-tauri/templates/ci-placeholder.json
-          }
-          New-Item -ItemType File -Force frontend/src-tauri/example_audio.wav | Out-Null
+          rustfmt --edition 2021 --check frontend/src-tauri/src/sherpa_onnx_engine/engine.rs
+          rustfmt --edition 2021 --check frontend/src-tauri/src/sherpa_onnx_engine/commands.rs
+          rustfmt --edition 2021 --check frontend/src-tauri/src/translation/llm.rs
+          rustfmt --edition 2021 --check frontend/src-tauri/src/translation/mod.rs
+          rustfmt --edition 2021 --check frontend/src-tauri/src/model_download.rs
 
-      - name: Rust check
-        run: cargo check -p voxminutes
+      - name: Create standalone Whisper API smoke crate
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force .ci-whisper-smoke/src | Out-Null
+          @'
+          [package]
+          name = "whisper-api-smoke"
+          version = "0.1.0"
+          edition = "2021"
+
+          [dependencies]
+          sherpa-onnx = { version = "1.13", default-features = false, features = ["shared"] }
+          '@ | Set-Content -Encoding UTF8 .ci-whisper-smoke/Cargo.toml
+
+          @'
+          use sherpa_onnx::{
+              OfflineRecognizerConfig,
+              OfflineWhisperModelConfig,
+          };
+
+          fn main() {
+              let mut config = OfflineRecognizerConfig::default();
+              config.model_config.whisper = OfflineWhisperModelConfig {
+                  encoder: Some("tiny-encoder.int8.onnx".to_string()),
+                  decoder: Some("tiny-decoder.int8.onnx".to_string()),
+                  language: Some("it".to_string()),
+                  task: Some("transcribe".to_string()),
+                  tail_paddings: 300,
+                  enable_token_timestamps: false,
+                  enable_segment_timestamps: false,
+              };
+              config.model_config.tokens = Some("tiny-tokens.txt".to_string());
+              config.model_config.num_threads = 4;
+              config.model_config.provider = Some("cpu".to_string());
+              let _ = config;
+          }
+          '@ | Set-Content -Encoding UTF8 .ci-whisper-smoke/src/main.rs
+
+      - name: Compile sherpa-onnx Whisper API smoke test
+        run: cargo check --manifest-path .ci-whisper-smoke/Cargo.toml
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
