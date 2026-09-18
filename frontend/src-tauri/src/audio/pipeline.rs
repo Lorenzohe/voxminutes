@@ -11,7 +11,12 @@ use rubato::{Resampler, SincFixedIn, SincInterpolationParameters, SincInterpolat
 use super::devices::AudioDevice;
 use super::recording_state::{AudioChunk, AudioError, RecordingState, DeviceType};
 use super::audio_processing::{audio_to_mono, LoudnessNormalizer, NoiseSuppressionProcessor, HighPassFilter, AgcProcessor, GtcrnDenoiser};
-use super::vad::{ContinuousVadProcessor};
+use super::vad::{ContinuousVadProcessor, SpeechSegment};
+
+pub(crate) const WHISPER_PARTIAL_CHUNK_FLAG: u64 = 1u64 << 63;
+const WHISPER_PREVIEW_INTERVAL_SAMPLES: usize = 4 * 16000;
+const WHISPER_MAX_LIVE_SEGMENT_SAMPLES: usize = 15 * 16000;
+const WHISPER_ROLLOVER_OVERLAP_SAMPLES: usize = 24_000; // 1.5s at 16kHz
 
 /// Ring buffer for synchronized audio mixing
 /// Accumulates samples from mic and system streams until we have aligned windows
@@ -791,6 +796,10 @@ pub struct AudioPipeline {
     last_mixed_rms_log: std::time::Instant,
     // X-ASR mode: bypass VAD and send continuous mixed audio directly
     bypass_vad: bool,
+    // Whisper mode: emit replaceable partial snapshots while VAD speech is ongoing.
+    whisper_live_preview: bool,
+    whisper_active_segment_id: Option<u64>,
+    whisper_last_preview_samples: usize,
 }
 
 impl AudioPipeline {
@@ -860,6 +869,98 @@ impl AudioPipeline {
             // Diagnostic
             last_mixed_rms_log: std::time::Instant::now(),
             bypass_vad: false,
+            whisper_live_preview: false,
+            whisper_active_segment_id: None,
+            whisper_last_preview_samples: 0,
+        }
+    }
+
+    fn reserve_whisper_segment_id(&mut self) -> u64 {
+        if let Some(id) = self.whisper_active_segment_id {
+            return id;
+        }
+        let id = self.chunk_id_counter;
+        self.chunk_id_counter += 1;
+        self.whisper_active_segment_id = Some(id);
+        id
+    }
+
+    fn send_vad_segment(&mut self, segment: SpeechSegment, is_partial: bool) {
+        if segment.samples.len() < 800 {
+            return;
+        }
+
+        let base_id = if self.whisper_live_preview {
+            if is_partial {
+                self.reserve_whisper_segment_id()
+            } else if let Some(id) = self.whisper_active_segment_id.take() {
+                id
+            } else {
+                let id = self.chunk_id_counter;
+                self.chunk_id_counter += 1;
+                id
+            }
+        } else {
+            let id = self.chunk_id_counter;
+            self.chunk_id_counter += 1;
+            id
+        };
+
+        let chunk_id = if is_partial {
+            base_id | WHISPER_PARTIAL_CHUNK_FLAG
+        } else {
+            base_id
+        };
+
+        let duration_ms = segment.end_timestamp_ms - segment.start_timestamp_ms;
+        let transcription_chunk = AudioChunk {
+            data: segment.samples,
+            sample_rate: 16000,
+            timestamp: segment.start_timestamp_ms / 1000.0,
+            chunk_id,
+            device_type: DeviceType::Microphone,
+        };
+
+        if let Err(e) = self.transcription_sender.send(transcription_chunk) {
+            warn!("Failed to send VAD segment: {}", e);
+        } else if is_partial {
+            debug!("📤 Whisper partial snapshot: {:.1}ms, seq={}", duration_ms, base_id);
+        } else {
+            info!("📤 Whisper/final VAD segment: {:.1}ms, seq={}", duration_ms, base_id);
+            self.whisper_last_preview_samples = 0;
+        }
+    }
+
+    fn maybe_emit_whisper_live_preview(&mut self) {
+        if !self.whisper_live_preview || !self.vad_processor.is_in_speech() {
+            return;
+        }
+
+        let current_len = self.vad_processor.current_speech_len_samples();
+
+        // Safety boundary for truly continuous speech. Finalize a <=15s window
+        // but keep 1.5s audio overlap so the next window retains linguistic context.
+        if current_len >= WHISPER_MAX_LIVE_SEGMENT_SAMPLES {
+            if let Some(segment) = self
+                .vad_processor
+                .rollover_current_speech(WHISPER_ROLLOVER_OVERLAP_SAMPLES)
+            {
+                self.send_vad_segment(segment, false);
+                self.whisper_last_preview_samples =
+                    self.vad_processor.current_speech_len_samples();
+            }
+            return;
+        }
+
+        // Partial snapshots replace the same UI row; they do not finalize a sentence.
+        if current_len >= WHISPER_PREVIEW_INTERVAL_SAMPLES
+            && current_len.saturating_sub(self.whisper_last_preview_samples)
+                >= WHISPER_PREVIEW_INTERVAL_SAMPLES
+        {
+            if let Some(segment) = self.vad_processor.snapshot_current_speech() {
+                self.send_vad_segment(segment, true);
+                self.whisper_last_preview_samples = current_len;
+            }
         }
     }
 
@@ -975,30 +1076,9 @@ impl AudioPipeline {
                                 match vad_result {
                                     Ok(Ok(speech_segments)) => {
                                         for segment in speech_segments {
-                                            let duration_ms = segment.end_timestamp_ms - segment.start_timestamp_ms;
-
-                                            if segment.samples.len() >= 800 {
-                                                info!("📤 Sending VAD segment: {:.1}ms, {} samples",
-                                                      duration_ms, segment.samples.len());
-
-                                                let transcription_chunk = AudioChunk {
-                                                    data: segment.samples,
-                                                    sample_rate: 16000,
-                                                    timestamp: segment.start_timestamp_ms / 1000.0,
-                                                    chunk_id: self.chunk_id_counter,
-                                                    device_type: DeviceType::Microphone,
-                                                };
-
-                                                if let Err(e) = self.transcription_sender.send(transcription_chunk) {
-                                                    warn!("Failed to send VAD segment: {}", e);
-                                                } else {
-                                                    self.chunk_id_counter += 1;
-                                                }
-                                            } else {
-                                                debug!("⏭️ Dropping short VAD segment: {:.1}ms ({} samples < 800)",
-                                                       duration_ms, segment.samples.len());
-                                            }
+                                            self.send_vad_segment(segment, false);
                                         }
+                                        self.maybe_emit_whisper_live_preview();
                                     }
                                     Ok(Err(e)) => {
                                         warn!("VAD processing error: {}", e);
@@ -1069,24 +1149,8 @@ impl AudioPipeline {
                 for segment in final_segments {
                     let duration_ms = segment.end_timestamp_ms - segment.start_timestamp_ms;
 
-                    // Send segments >= 50ms (800 samples at 16kHz) - matches main pipeline filter
                     if segment.samples.len() >= 800 {
-                        info!("📤 Sending final VAD segment to Whisper: {:.1}ms duration, {} samples",
-                              duration_ms, segment.samples.len());
-
-                        let transcription_chunk = AudioChunk {
-                            data: segment.samples,
-                            sample_rate: 16000,
-                            timestamp: segment.start_timestamp_ms / 1000.0,
-                            chunk_id: self.chunk_id_counter,
-                            device_type: DeviceType::Microphone,
-                        };
-
-                        if let Err(e) = self.transcription_sender.send(transcription_chunk) {
-                            warn!("Failed to send final VAD segment: {}", e);
-                        } else {
-                            self.chunk_id_counter += 1;
-                        }
+                        self.send_vad_segment(segment, false);
                     } else {
                         info!("⏭️ Skipping short final segment: {:.1}ms ({} samples < 800)",
                               duration_ms, segment.samples.len());
@@ -1140,6 +1204,7 @@ impl AudioPipelineManager {
         system_device_name: String,
         system_device_kind: super::device_detection::InputDeviceKind,
         bypass_vad: bool,
+        whisper_live_preview: bool,
     ) -> Result<()> {
         // Log device information for adaptive buffering
         info!("🎙️ Starting pipeline with device info:");
@@ -1169,6 +1234,7 @@ impl AudioPipelineManager {
         // This ensures both mic AND system audio are captured in recordings
         pipeline.recording_sender_for_mixed = recording_sender;
         pipeline.bypass_vad = bypass_vad;
+        pipeline.whisper_live_preview = whisper_live_preview;
 
         let handle = tokio::spawn(async move {
             pipeline.run().await

@@ -204,6 +204,7 @@ fn hymt2_source_lang(text: &str, asr_hint: Option<&str>) -> String {
 struct TranslateTask {
     text: String,
     sequence_id: u64,
+    is_partial: bool,
 }
 
 static TRANSLATE_QUEUE: LazyLock<Mutex<VecDeque<TranslateTask>>> =
@@ -311,10 +312,50 @@ pub fn queue_translation<R: Runtime>(app: &AppHandle<R>, text: &str, sequence_id
         return;
     }
     if let Ok(mut q) = TRANSLATE_QUEUE.lock() {
-        q.push_back(TranslateTask { text, sequence_id });
+        // A committed final supersedes any not-yet-processed preview for the same row.
+        q.retain(|task| !(task.sequence_id == sequence_id && task.is_partial));
+        q.push_back(TranslateTask {
+            text,
+            sequence_id,
+            is_partial: false,
+        });
     }
     if let Ok(mut seen) = TRANSLATE_SEEN.lock() {
         seen.insert(sequence_id);
+    }
+    kick_translation_worker(app);
+}
+
+/// Queue a replaceable realtime preview translation. Multiple pending previews
+/// for the same sequence are coalesced so Hy-MT2 cannot build an ever-growing
+/// backlog while somebody speaks continuously.
+pub fn queue_partial_translation<R: Runtime>(
+    app: &AppHandle<R>,
+    text: &str,
+    sequence_id: u64,
+) {
+    if !TRANSLATION_ENABLED.load(Ordering::SeqCst) {
+        return;
+    }
+    let text = text.trim().to_string();
+    if text.is_empty() {
+        return;
+    }
+    let target = TARGET_LANG
+        .lock()
+        .map(|t| t.clone())
+        .unwrap_or_else(|_| "en".to_string());
+    if resolve_direction(&text, &target).is_none() {
+        return;
+    }
+
+    if let Ok(mut q) = TRANSLATE_QUEUE.lock() {
+        q.retain(|task| !(task.sequence_id == sequence_id && task.is_partial));
+        q.push_back(TranslateTask {
+            text,
+            sequence_id,
+            is_partial: true,
+        });
     }
     kick_translation_worker(app);
 }
@@ -371,6 +412,7 @@ pub async fn process_pending_translations<R: Runtime>(app: AppHandle<R>) {
 
         let text = task.text.clone();
         let seq = task.sequence_id;
+        let task_is_partial = task.is_partial;
         let engine_kind = current_engine();
         let direction_for_task = direction.clone();
         let app_for_stream = app.clone();
@@ -427,7 +469,7 @@ pub async fn process_pending_translations<R: Runtime>(app: AppHandle<R>) {
                     translated_text: translated,
                     source_lang,
                     target_lang: effective_target,
-                    is_partial: false,
+                    is_partial: task_is_partial,
                 };
                 if let Err(e) = app.emit("translate-update", &update) {
                     log::warn!("translate-update emit failed: {}", e);

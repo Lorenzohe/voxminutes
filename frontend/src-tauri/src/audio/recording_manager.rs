@@ -29,6 +29,7 @@ pub struct RecordingManager {
     device_event_receiver: Option<mpsc::UnboundedReceiver<DeviceEvent>>,
     follow_mic: bool,
     follow_system: bool,
+    whisper_live_preview: bool,
 }
 
 // SAFETY: RecordingManager contains types that we've marked as Send
@@ -51,6 +52,7 @@ impl RecordingManager {
             device_event_receiver: Some(device_event_receiver),
             follow_mic: false,
             follow_system: false,
+            whisper_live_preview: false,
         }
     }
 
@@ -58,6 +60,10 @@ impl RecordingManager {
     pub fn set_follow_flags(&mut self, follow_mic: bool, follow_system: bool) {
         self.follow_mic = follow_mic;
         self.follow_system = follow_system;
+    }
+
+    pub fn set_whisper_live_preview(&mut self, enabled: bool) {
+        self.whisper_live_preview = enabled;
     }
 
     // Remove app handle storage for now - will be passed directly when saving
@@ -131,6 +137,7 @@ impl RecordingManager {
             sys_name,
             sys_kind,
             bypass_vad,
+            self.whisper_live_preview,
         )?;
 
         // Give the pipeline a moment to fully initialize before starting streams

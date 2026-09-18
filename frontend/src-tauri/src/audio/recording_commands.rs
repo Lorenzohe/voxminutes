@@ -485,16 +485,23 @@ pub async fn start_recording_with_meeting_name<R: Runtime>(
     let mic_name_for_monitoring = microphone_device.as_ref().map(|d| d.name.clone());
     let sys_name_for_monitoring = system_device.as_ref().map(|d| d.name.clone());
 
-    // Determine if X-ASR is selected (requires VAD bypass for continuous streaming)
-    let bypass_vad = match crate::api::api::api_get_transcript_config(
+    // Select the live segmentation mode from the active ASR model.
+    let (bypass_vad, whisper_live_preview) = match crate::api::api::api_get_transcript_config(
         app.clone(), app.clone().state(), None
     ).await {
-        Ok(Some(config)) => config.model.starts_with("x-asr-"),
-        _ => false,
+        Ok(Some(config)) => (
+            config.model.starts_with("x-asr-"),
+            config.model.starts_with("whisper-"),
+        ),
+        _ => (false, false),
     };
     if bypass_vad {
         info!("🎙️ X-ASR mode: VAD will be bypassed for continuous streaming");
     }
+    if whisper_live_preview {
+        info!("🎙️ Whisper live preview enabled: 4s partial snapshots + 15s safety rollover");
+    }
+    manager.set_whisper_live_preview(whisper_live_preview);
 
     let transcription_receiver = manager
         .start_recording(microphone_device, system_device, auto_save, follow_mic, follow_system, bypass_vad)
@@ -702,16 +709,23 @@ pub async fn start_recording_with_devices_and_meeting<R: Runtime>(
     });
 
     // Start recording with specified devices and auto_save setting
-    // Determine if X-ASR is selected (requires VAD bypass for continuous streaming)
-    let bypass_vad = match crate::api::api::api_get_transcript_config(
+    // Select the live segmentation mode from the active ASR model.
+    let (bypass_vad, whisper_live_preview) = match crate::api::api::api_get_transcript_config(
         app.clone(), app.clone().state(), None
     ).await {
-        Ok(Some(config)) => config.model.starts_with("x-asr-"),
-        _ => false,
+        Ok(Some(config)) => (
+            config.model.starts_with("x-asr-"),
+            config.model.starts_with("whisper-"),
+        ),
+        _ => (false, false),
     };
     if bypass_vad {
         info!("🎙️ X-ASR mode: VAD will be bypassed for continuous streaming");
     }
+    if whisper_live_preview {
+        info!("🎙️ Whisper live preview enabled: 4s partial snapshots + 15s safety rollover");
+    }
+    manager.set_whisper_live_preview(whisper_live_preview);
 
     let transcription_receiver = manager
         .start_recording(mic_device, system_device, auto_save, follow_mic, follow_system, bypass_vad)

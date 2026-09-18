@@ -111,6 +111,8 @@ pub fn start_transcription_task<R: Runtime>(
                     .await
                     .unwrap_or_else(|| "unknown".to_string());
 
+                let whisper_live_mode = current_model.starts_with("whisper-");
+
                 if initial_model_loaded {
                     info!(
                         "✅ Worker {}: model '{}' is loaded and ready",
@@ -148,9 +150,19 @@ pub fn start_transcription_task<R: Runtime>(
                             let chunk_timestamp = chunk.timestamp;
                             let chunk_duration = chunk.data.len() as f64 / chunk.sample_rate as f64;
 
-                            // Pre-generate sequence_id so streaming providers can use it
-                            // for partial updates before transcribe() returns
-                            let sequence_id = SEQUENCE_COUNTER.fetch_add(1, Ordering::SeqCst);
+                            // Whisper live-preview chunks encode "partial" in the high bit
+                            // and keep the lower bits stable across partial -> final updates.
+                            let requested_partial = whisper_live_mode
+                                && (chunk.chunk_id
+                                    & super::super::pipeline::WHISPER_PARTIAL_CHUNK_FLAG)
+                                    != 0;
+                            let logical_chunk_id = chunk.chunk_id
+                                & !super::super::pipeline::WHISPER_PARTIAL_CHUNK_FLAG;
+                            let sequence_id = if whisper_live_mode {
+                                logical_chunk_id
+                            } else {
+                                SEQUENCE_COUNTER.fetch_add(1, Ordering::SeqCst)
+                            };
                             let audio_start_time = chunk_timestamp;
                             let audio_end_time = chunk_timestamp + chunk_duration;
 
@@ -166,6 +178,7 @@ pub fn start_transcription_task<R: Runtime>(
 
                             match transcribe_chunk_with_provider(&engine_clone, chunk, &app_clone).await {
                                 Ok((transcript, confidence_opt, is_partial)) => {
+                                    let is_partial = is_partial || requested_partial;
                                     if !transcript.trim().is_empty() {
                                         info!("✅ Worker {} transcribed: {} (confidence: {:?}, partial: {})",
                                               worker_id, transcript, confidence_opt, is_partial);
@@ -202,8 +215,16 @@ pub fn start_transcription_task<R: Runtime>(
                                             ),
                                         }
 
-                                        // Queue for translation (no-op when disabled)
-                                        if !is_partial {
+                                        // Partial Whisper snapshots are translated too, but stay
+                                        // replaceable. Only the natural/safety final becomes a
+                                        // committed translation.
+                                        if is_partial {
+                                            crate::translation::queue_partial_translation(
+                                                &app_clone,
+                                                &update.text,
+                                                sequence_id,
+                                            );
+                                        } else {
                                             crate::translation::queue_translation(
                                                 &app_clone,
                                                 &update.text,

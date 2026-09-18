@@ -24,6 +24,9 @@ pub struct ContinuousVadProcessor {
     in_speech: bool,
     processed_samples: usize,
     speech_start_sample: usize,
+    // True after a long continuous utterance has been force-rolled into a
+    // finalized live segment while VAD remains in the speech state.
+    speech_has_rolled_over: bool,
     // State tracking for smart logging
     last_logged_state: bool,
     // Rate-limit the "large speech buffer" warning to avoid log spam.
@@ -94,6 +97,7 @@ impl ContinuousVadProcessor {
             in_speech: false,
             processed_samples: 0,
             speech_start_sample: 0,
+            speech_has_rolled_over: false,
             // Initialize state tracking
             last_logged_state: false,
             last_large_buffer_warn: None,
@@ -140,6 +144,58 @@ impl ContinuousVadProcessor {
         }
 
         Ok(completed_segments)
+    }
+
+    /// Whether Silero currently considers the stream to be inside one speech turn.
+    pub fn is_in_speech(&self) -> bool {
+        self.in_speech
+    }
+
+    /// Number of 16 kHz samples accumulated for the current live speech window.
+    pub fn current_speech_len_samples(&self) -> usize {
+        self.current_speech.len()
+    }
+
+    /// Snapshot the current speech window without ending the VAD turn.
+    /// Used for replaceable partial Whisper subtitles.
+    pub fn snapshot_current_speech(&self) -> Option<SpeechSegment> {
+        if !self.in_speech || self.current_speech.is_empty() {
+            return None;
+        }
+        let start_ms = self.speech_start_sample as f64 / 16000.0 * 1000.0;
+        let end_ms = start_ms + self.current_speech.len() as f64 / 16000.0 * 1000.0;
+        Some(SpeechSegment {
+            samples: self.current_speech.clone(),
+            start_timestamp_ms: start_ms,
+            end_timestamp_ms: end_ms,
+            confidence: 0.85,
+        })
+    }
+
+    /// Finalize the current live window while keeping a short overlap tail.
+    /// VAD itself stays in the speech state, so continuous speech can continue
+    /// seamlessly into the next window.
+    pub fn rollover_current_speech(&mut self, overlap_samples: usize) -> Option<SpeechSegment> {
+        if !self.in_speech || self.current_speech.is_empty() {
+            return None;
+        }
+
+        let start_sample = self.speech_start_sample;
+        let end_sample = start_sample + self.current_speech.len();
+        let segment = SpeechSegment {
+            samples: self.current_speech.clone(),
+            start_timestamp_ms: start_sample as f64 / 16000.0 * 1000.0,
+            end_timestamp_ms: end_sample as f64 / 16000.0 * 1000.0,
+            confidence: 0.85,
+        };
+
+        let keep = overlap_samples.min(self.current_speech.len());
+        let keep_start = self.current_speech.len() - keep;
+        self.current_speech = self.current_speech[keep_start..].to_vec();
+        self.speech_start_sample = end_sample.saturating_sub(keep);
+        self.speech_has_rolled_over = true;
+
+        Some(segment)
     }
 
     /// Improved resampling from input sample rate to 16kHz with anti-aliasing
@@ -281,6 +337,7 @@ impl ContinuousVadProcessor {
                     // times for force-ended flush segments.)
                     self.speech_start_sample = (timestamp_ms as u64 * 16000 / 1000) as usize;
                     self.current_speech.clear();
+                    self.speech_has_rolled_over = false;
                 }
                 VadTransition::SpeechEnd { start_timestamp_ms, end_timestamp_ms, samples } => {
                     // Only log if we were previously in speech state
@@ -290,28 +347,50 @@ impl ContinuousVadProcessor {
                     }
                     self.in_speech = false;
 
-                    // Use samples from VAD transition if available, otherwise use accumulated samples
-                    let speech_samples = if !samples.is_empty() {
-                        samples
-                    } else {
-                        self.current_speech.clone()
-                    };
+                    // Normally use the VAD-provided samples because they include its
+                    // pre/post padding. After a live rollover, however, those samples
+                    // represent the *whole* original utterance and would duplicate text
+                    // already finalized. In that case only commit the remaining tail.
+                    let (speech_samples, segment_start_ms, segment_end_ms) =
+                        if self.speech_has_rolled_over {
+                            let speech_samples = self.current_speech.clone();
+                            let segment_start_ms =
+                                self.speech_start_sample as f64 / 16000.0 * 1000.0;
+                            let segment_end_ms = segment_start_ms
+                                + speech_samples.len() as f64 / 16000.0 * 1000.0;
+                            (speech_samples, segment_start_ms, segment_end_ms)
+                        } else {
+                            let speech_samples = if !samples.is_empty() {
+                                samples
+                            } else {
+                                self.current_speech.clone()
+                            };
+                            (
+                                speech_samples,
+                                start_timestamp_ms as f64,
+                                end_timestamp_ms as f64,
+                            )
+                        };
 
                     if !speech_samples.is_empty() {
                         let segment = SpeechSegment {
                             samples: speech_samples,
-                            start_timestamp_ms: start_timestamp_ms as f64,
-                            end_timestamp_ms: end_timestamp_ms as f64,
-                            confidence: 0.9, // VAD confidence
+                            start_timestamp_ms: segment_start_ms,
+                            end_timestamp_ms: segment_end_ms,
+                            confidence: 0.9,
                         };
 
-                        info!("VAD: Completed speech segment: {:.1}ms duration, {} samples",
-                              end_timestamp_ms - start_timestamp_ms, segment.samples.len());
+                        info!(
+                            "VAD: Completed speech segment: {:.1}ms duration, {} samples",
+                            segment_end_ms - segment_start_ms,
+                            segment.samples.len()
+                        );
 
                         self.speech_segments.push_back(segment);
                     }
 
                     self.current_speech.clear();
+                    self.speech_has_rolled_over = false;
                 }
             }
         }
