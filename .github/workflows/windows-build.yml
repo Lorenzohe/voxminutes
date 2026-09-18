@@ -26,6 +26,13 @@ jobs:
         with:
           version: 9
 
+      - name: Isolate frontend from broken root pnpm workspace
+        shell: pwsh
+        run: |
+          if (Test-Path pnpm-workspace.yaml) {
+            Move-Item pnpm-workspace.yaml pnpm-workspace.yaml.ci-disabled
+          }
+
       - name: Install frontend dependencies
         working-directory: frontend
         run: pnpm install --frozen-lockfile
