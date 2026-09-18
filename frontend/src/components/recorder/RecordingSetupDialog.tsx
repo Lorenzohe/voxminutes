@@ -64,19 +64,34 @@ export function RecordingSetupDialog({ open, onOpenChange, onConfirm }: Recordin
   const systemOptions = useMemo(() => devices.filter((d) => d.device_type === 'Output'), [devices])
 
   const isXAsr = modelName.startsWith('x-asr-')
+  const isWhisper = modelName.startsWith('whisper-')
   const selectedInfo = localModels.find((m) => m.name === modelName)
   const canStart = !!selectedInfo && selectedInfo.status !== 'Missing'
 
-  const languageOptions = [
-    { code: 'auto', name: t.recLangAuto },
-    { code: 'zh', name: t.recLangZh },
-    { code: 'en', name: t.recLangEn },
-  ]
+  const languageOptions = isWhisper
+    ? [
+        { code: 'auto', name: t.recLangAuto },
+        { code: 'it', name: 'Italiano' },
+        { code: 'en', name: t.recLangEn },
+      ]
+    : [
+        { code: 'auto', name: t.recLangAuto },
+        { code: 'zh', name: t.recLangZh },
+        { code: 'en', name: t.recLangEn },
+      ]
 
   const modelLabel = (name: string): string => {
     if (name === 'x-asr-480ms') return t.recModelXAsr
     if (name === 'sense-voice') return t.recModelSenseVoice
+    if (name === 'whisper-tiny') return 'Whisper Tiny Multilingual'
     return name
+  }
+
+  const modelDescription = (name: string): string => {
+    if (name === 'x-asr-480ms') return t.recXAsrDesc
+    if (name === 'sense-voice') return t.recSenseVoiceDesc
+    if (name === 'whisper-tiny') return 'Multilingual Whisper · Italiano / English'
+    return ''
   }
 
   // 目标语言选项按引擎动态生成（全量，不排除 home）；zh/en 沿用录音面板既有文案，其余用语言名
@@ -101,6 +116,12 @@ export function RecordingSetupDialog({ open, onOpenChange, onConfirm }: Recordin
       ipcSetTranslationTargetLang(fallback).catch(() => {})
     }
   }
+
+  useEffect(() => {
+    if (!isWhisper && language === 'it') {
+      setLanguage('auto')
+    }
+  }, [isWhisper, language])
 
   // 打开时重置为 store 里的当前选择并刷新设备列表；麦克风默认静音（与主窗口状态互通）
   useEffect(() => {
@@ -173,7 +194,7 @@ export function RecordingSetupDialog({ open, onOpenChange, onConfirm }: Recordin
                     )}
                     <div className="text-sm font-semibold">{modelLabel(m.name)}</div>
                     <div className="mt-0.5 text-[11px] text-muted-foreground">
-                      {m.name === 'x-asr-480ms' ? t.recXAsrDesc : t.recSenseVoiceDesc}
+                      {modelDescription(m.name)}
                       {available ? '' : ` · ${t.recNotDownloaded}`}
                     </div>
                   </button>
