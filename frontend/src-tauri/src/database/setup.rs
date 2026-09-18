@@ -6,7 +6,7 @@ use tauri::{AppHandle, Manager};
 use super::manager::DatabaseManager;
 use crate::state::AppState;
 
-fn database_path() -> PathBuf {
+pub(crate) fn database_path() -> PathBuf {
     let base = dirs::data_dir()
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
 
