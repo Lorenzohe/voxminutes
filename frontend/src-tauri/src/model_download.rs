@@ -224,6 +224,37 @@ const MODELS: &[DownloadableModel] = &[
         size_bytes: 120_000_000,
         required_files: &["encoder_model_int8.onnx", "decoder_model_merged_int8.onnx", "tokenizer.json"],
     },
+    DownloadableModel {
+        id: "m2m100-418m-int8",
+        display_name: "M2M100 418M INT8（实时多语言翻译）",
+        dir_name: "m2m100-418m-int8",
+        sources: &[
+            ModelSource::Files {
+                base_url: "https://huggingface.co/Xenova/m2m100_418M",
+                resolve_path: HF_RESOLVE,
+                files: &[
+                    "onnx/encoder_model_quantized.onnx",
+                    "onnx/decoder_model_merged_quantized.onnx",
+                    "tokenizer.json",
+                ],
+            },
+            ModelSource::Files {
+                base_url: "https://hf-mirror.com/Xenova/m2m100_418M",
+                resolve_path: HF_RESOLVE,
+                files: &[
+                    "onnx/encoder_model_quantized.onnx",
+                    "onnx/decoder_model_merged_quantized.onnx",
+                    "tokenizer.json",
+                ],
+            },
+        ],
+        size_bytes: 640_000_000,
+        required_files: &[
+            "encoder_model_quantized.onnx",
+            "decoder_model_merged_quantized.onnx",
+            "tokenizer.json",
+        ],
+    },
     // Local meeting-summary LLM (GGUF, runs via the llama helper).
     DownloadableModel {
         id: "qwen2.5-3b-instruct-q4_k_m",
@@ -351,6 +382,18 @@ pub(crate) fn summary_model_installed(model_id: &str) -> bool {
 }
 
 /// Hy-MT2 LLM 翻译模型 id（MODELS 注册表中的唯一条目）。
+pub const M2M100_MODEL_ID: &str = "m2m100-418m-int8";
+
+pub(crate) fn m2m100_installed() -> bool {
+    match find_model(M2M100_MODEL_ID) {
+        Some(m) => is_installed(
+            &crate::sherpa_onnx_engine::commands::resolved_models_dir(),
+            m,
+        ),
+        None => false,
+    }
+}
+
 pub const HY_MT2_MODEL_ID: &str = "hy-mt2-1.8b-q4_k_m";
 
 /// Whether the Hy-MT2 translation model is installed.

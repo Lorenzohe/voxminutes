@@ -107,9 +107,9 @@ pub(crate) fn build_prompt(text: &str, source_lang: &str, target_lang: &str, asr
                  要求：\n\
                  1. 只输出{tgt_en}译文，严禁输出原文、双语对照、原文片段或重复原文；\n\
                  2. 直接开始翻译，不要写“翻译：”“{tgt_en}：”等任何前缀；\n\
-                 3. 修正识别错误和同音词；\n\
-                 4. 省略语气词；\n\
-                 5. 输出流畅自然的口语翻译；\n\
+                 3. 完整保留原文每一项语义，不得省略、概括、合并或添加内容；\n\
+                 4. 仅在明显是语音识别错误时做最小纠正，不得改变原意；\n\
+                 5. 保留有意义的感叹、重复和语气表达，同时输出流畅自然的口语翻译；\n\
                  6. 不要解释，不要备注。"
             )
         } else {
@@ -120,9 +120,9 @@ pub(crate) fn build_prompt(text: &str, source_lang: &str, target_lang: &str, asr
                  Do NOT output the original text, bilingual pairs, source fragments, or repeated source.\n\
                  2. Start directly with the translation; \
                  do not write prefixes like \"Translation:\" or \"{tgt_en}:\".\n\
-                 3. Fix ASR errors and homophones.\n\
-                 4. Omit filler words.\n\
-                 5. Produce a fluent, natural, conversational translation.\n\
+                 3. Preserve every semantic unit; do not omit, summarize, merge, or add content.\n\
+                 4. Correct only obvious ASR errors with the smallest possible change; do not change the meaning.\n\
+                 5. Preserve meaningful interjections, repetitions, and tone while producing fluent natural speech.\n\
                  6. Do not explain or add notes."
             )
         };
@@ -455,7 +455,7 @@ mod tests {
         assert!(p.contains("将以下Chinese语音转录文本翻译为English。"));
         // 完整 6 条要求（中文版）
         assert!(p.contains("1. 只输出English译文，严禁输出原文、双语对照、原文片段或重复原文；"));
-        assert!(p.contains("3. 修正识别错误和同音词；"));
+        assert!(p.contains("3. 完整保留原文每一项语义，不得省略、概括、合并或添加内容；"));
         assert!(p.contains("6. 不要解释，不要备注。"));
         assert!(p.contains("Source: 今天天气不错"));
         assert!(p.contains("Target (English):"));
@@ -565,7 +565,7 @@ mod tests {
         assert!(p.contains("Translate the following English spoken transcript into Japanese."));
         // 完整 6 条要求（英文版）
         assert!(p.contains("1. Output ONLY the Japanese translation."));
-        assert!(p.contains("3. Fix ASR errors and homophones."));
+        assert!(p.contains("3. Preserve every semantic unit; do not omit, summarize, merge, or add content."));
         assert!(p.contains("6. Do not explain or add notes."));
         assert!(p.contains("Source: hello world"));
         assert!(p.contains("Target (Japanese):"));

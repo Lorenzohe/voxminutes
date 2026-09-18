@@ -229,6 +229,7 @@ export function RecorderControls() {
                 onChange={(e) => handleEngineChange(e.target.value as TranslationEngine)}
                 title={t.recTranslateEngine}
               >
+                <option value="m2m100">M2M100 418M INT8（实时）</option>
                 <option value="opus">{t.recEngineOpus}</option>
                 <option value="hymt2">{t.recEngineHymt2}</option>
               </select>

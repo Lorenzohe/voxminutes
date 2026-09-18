@@ -621,7 +621,7 @@ pub fn run() {
                     (engine, lang, home)
                 });
                 if let Some(engine) =
-                    saved_engine.filter(|e| matches!(e.as_str(), "opus" | "hymt2"))
+                    saved_engine.filter(|e| matches!(e.as_str(), "opus" | "m2m100" | "hymt2"))
                 {
                     if let Ok(mut guard) = translation::TRANSLATION_ENGINE.lock() {
                         *guard = engine;
@@ -660,14 +660,18 @@ pub fn run() {
                 let start = std::time::Instant::now();
                 let _ = tokio::task::spawn_blocking(move || {
                     if preload_engine == "hymt2" {
-                        // Hy-MT2：发一次暖机 generate，使 sidecar 启动并驻留模型
                         if model_download::hy_mt2_installed() {
                             if let Err(e) = translation::llm::warmup() {
                                 log::warn!("Hy-MT2 翻译引擎预热失败: {}", e);
                             }
                         }
+                    } else if preload_engine == "m2m100" {
+                        if model_download::m2m100_installed() {
+                            if let Err(e) = translation::get_m2m100_engine() {
+                                log::warn!("M2M100 翻译引擎预加载失败: {}", e);
+                            }
+                        }
                     } else {
-                        // OPUS-MT 双方向预热
                         for direction in ["zh-en", "en-zh"] {
                             if translation::is_model_installed(direction) {
                                 if let Err(e) = translation::get_engine(direction) {

@@ -7,7 +7,7 @@ use std::sync::atomic::Ordering;
 use crate::database::repositories::setting::SettingsRepository;
 use crate::state::AppState;
 
-use super::{current_engine, get_engine, is_model_installed, llm, HOME_LANG, TARGET_LANG, TRANSLATION_ENABLED, TRANSLATION_ENGINE};
+use super::{current_engine, get_engine, get_m2m100_engine, is_model_installed, llm, m2m100, HOME_LANG, TARGET_LANG, TRANSLATION_ENABLED, TRANSLATION_ENGINE};
 
 /// Translate a block of text. direction: "auto" | "zh-en" | "en-zh"（hymt2 引擎
 /// 额外支持任意 "{src}-{tgt}" 语言对，如 "en-ja"、"zh-Hant-en"）。
@@ -28,6 +28,37 @@ pub async fn translate_text(
 ) -> Result<String, String> {
     if text.trim().is_empty() {
         return Ok(String::new());
+    }
+
+    if current_engine() == "m2m100" {
+        if !crate::model_download::m2m100_installed() {
+            return Err("M2M100 418M INT8 翻译模型未安装，请先到设置页下载。".to_string());
+        }
+        let explicit = llm::parse_direction(&direction);
+        let src = explicit
+            .map(|(s, _)| s.to_string())
+            .unwrap_or_else(|| super::detect_source_lang(&text).to_string());
+        let tgt = match target.filter(|t| t != "auto" && !t.trim().is_empty()) {
+            Some(t) => t,
+            None => match explicit {
+                Some((_, t)) => t.to_string(),
+                None => super::target_lang(),
+            },
+        };
+        if !m2m100::SUPPORTED_TARGET_LANGS.contains(&src.as_str())
+            || !m2m100::SUPPORTED_TARGET_LANGS.contains(&tgt.as_str())
+        {
+            return Err(format!("M2M100 不支持翻译方向: {} -> {}", src, tgt));
+        }
+        if src == tgt {
+            return Ok(text);
+        }
+        return tokio::task::spawn_blocking(move || {
+            let engine = get_m2m100_engine()?;
+            engine.translate(&text, &src, &tgt).map_err(|e| e.to_string())
+        })
+        .await
+        .map_err(|e| format!("翻译任务失败: {}", e))?;
     }
 
     if current_engine() == "hymt2" {
@@ -113,7 +144,7 @@ pub async fn set_translation_engine(
     state: tauri::State<'_, AppState>,
     engine: String,
 ) -> Result<(), String> {
-    if !matches!(engine.as_str(), "opus" | "hymt2") {
+    if !matches!(engine.as_str(), "opus" | "m2m100" | "hymt2") {
         return Err(format!("不支持的翻译引擎: {}", engine));
     }
     log::info!("Translation engine: {}", engine);
@@ -133,12 +164,21 @@ pub async fn set_translation_engine(
         let _ = tokio::task::spawn_blocking(move || {
             if engine == "hymt2" {
                 super::unload_opus_engines();
+                super::unload_m2m100_engine();
                 if crate::model_download::hy_mt2_installed() {
                     if let Err(e) = llm::warmup() {
                         log::warn!("Hy-MT2 翻译引擎预热失败: {}", e);
                     }
                 }
+            } else if engine == "m2m100" {
+                super::unload_opus_engines();
+                if crate::model_download::m2m100_installed() {
+                    if let Err(e) = get_m2m100_engine() {
+                        log::warn!("M2M100 翻译引擎预热失败: {}", e);
+                    }
+                }
             } else {
+                super::unload_m2m100_engine();
                 for direction in ["zh-en", "en-zh"] {
                     if is_model_installed(direction) {
                         if let Err(e) = get_engine(direction) {

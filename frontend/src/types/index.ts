@@ -237,8 +237,8 @@ export type TranslationDirection = 'auto' | 'zh-en' | 'en-zh'
  */
 export type TranslateTargetLang = string
 
-/** 翻译引擎：opus = OPUS-MT（快速），hymt2 = Hy-MT2（高质量） */
-export type TranslationEngine = 'opus' | 'hymt2'
+/** 翻译引擎：opus = 中英快速，m2m100 = 多语言实时，hymt2 = 高质量较慢 */
+export type TranslationEngine = 'opus' | 'm2m100' | 'hymt2'
 
 /** translate-update 事件 payload */
 export interface TranslateUpdate {

@@ -10,6 +10,7 @@
 pub mod commands;
 pub mod engine;
 pub mod llm;
+pub mod m2m100;
 
 use serde::Serialize;
 use std::collections::{HashSet, VecDeque};
@@ -19,9 +20,11 @@ use std::sync::{Arc, LazyLock, Mutex};
 use tauri::{AppHandle, Emitter, Runtime};
 
 use engine::OpusMtEngine;
+use m2m100::M2M100Engine;
 
 pub const MODEL_DIR_ZH_EN: &str = "opus-mt-zh-en";
 pub const MODEL_DIR_EN_ZH: &str = "opus-mt-en-zh";
+pub const MODEL_DIR_M2M100: &str = "m2m100-418m-int8";
 
 /// Realtime inline translation master switch (default off).
 pub static TRANSLATION_ENABLED: AtomicBool = AtomicBool::new(false);
@@ -36,11 +39,11 @@ pub(crate) static TARGET_LANG: LazyLock<Mutex<String>> = LazyLock::new(|| Mutex:
 /// 不参与实时方向解析。
 pub(crate) static HOME_LANG: LazyLock<Mutex<String>> = LazyLock::new(|| Mutex::new("zh".to_string()));
 
-/// 翻译引擎选择："opus"（OPUS-MT ort 引擎，默认）| "hymt2"（Hy-MT2 LLM 引擎）。
+/// 翻译引擎选择："opus"（中英快速）| "m2m100"（多语言实时）| "hymt2"（高质量 LLM）。
 pub(crate) static TRANSLATION_ENGINE: LazyLock<Mutex<String>> =
     LazyLock::new(|| Mutex::new("opus".to_string()));
 
-/// 当前翻译引擎 id（"opus" | "hymt2"）。
+/// 当前翻译引擎 id（"opus" | "m2m100" | "hymt2"）。
 pub fn current_engine() -> String {
     TRANSLATION_ENGINE
         .lock()
@@ -73,6 +76,7 @@ pub fn default_target_for_home(home: &str) -> String {
 
 static ZH_EN_ENGINE: LazyLock<Mutex<Option<Arc<OpusMtEngine>>>> = LazyLock::new(|| Mutex::new(None));
 static EN_ZH_ENGINE: LazyLock<Mutex<Option<Arc<OpusMtEngine>>>> = LazyLock::new(|| Mutex::new(None));
+static M2M100_ENGINE: LazyLock<Mutex<Option<Arc<M2M100Engine>>>> = LazyLock::new(|| Mutex::new(None));
 
 fn model_dir(name: &str) -> PathBuf {
     crate::sherpa_onnx_engine::commands::resolved_models_dir().join(name)
@@ -111,6 +115,42 @@ pub fn get_engine(direction: &str) -> Result<Arc<OpusMtEngine>, String> {
     *guard = Some(engine.clone());
     log::info!("Translation engine ready: {} ({})", direction, dir.display());
     Ok(engine)
+}
+
+pub fn get_m2m100_engine() -> Result<Arc<M2M100Engine>, String> {
+    let mut guard = M2M100_ENGINE.lock().map_err(|e| e.to_string())?;
+    if let Some(engine) = guard.as_ref() {
+        return Ok(engine.clone());
+    }
+    let dir = model_dir(MODEL_DIR_M2M100);
+    crate::llama_sidecar::emit_model_loading(MODEL_DIR_M2M100, "start", None, None);
+    let start = std::time::Instant::now();
+    let engine = match M2M100Engine::load(&dir) {
+        Ok(engine) => engine,
+        Err(e) => {
+            let msg = e.to_string();
+            crate::llama_sidecar::emit_model_loading(MODEL_DIR_M2M100, "error", None, Some(msg.clone()));
+            return Err(msg);
+        }
+    };
+    crate::llama_sidecar::emit_model_loading(
+        MODEL_DIR_M2M100,
+        "done",
+        Some(start.elapsed().as_millis() as u64),
+        None,
+    );
+    let engine = Arc::new(engine);
+    *guard = Some(engine.clone());
+    log::info!("M2M100 realtime translation engine ready ({})", dir.display());
+    Ok(engine)
+}
+
+pub fn unload_m2m100_engine() {
+    if let Ok(mut guard) = M2M100_ENGINE.lock() {
+        if guard.take().is_some() {
+            log::info!("M2M100 引擎已卸载，内存已释放");
+        }
+    }
 }
 
 /// Unload both OPUS-MT direction engines, freeing their memory (called when
@@ -248,8 +288,9 @@ pub struct TranslateUpdate {
 /// 返回 (direction, source_lang, effective_target)；目标语言不被当前引擎
 /// 支持时也返回 None（跳过）。
 fn resolve_direction(text: &str, target: &str) -> Option<(String, String, String)> {
-    if current_engine() == "hymt2" {
-        // Hy-MT2 LLM 引擎：优先使用 ASR 明确提供的语言提示。
+    let engine = current_engine();
+    if engine == "hymt2" || engine == "m2m100" {
+        // Multilingual engines: prefer the explicit ASR language hint.
         // 拉丁字母语言仅靠字符特征无法可靠区分（例如意大利语会被误判为英语），
         // 因此录音场景里 language=it 应直接驱动 it -> target 翻译。
         let asr_hint = crate::get_language_preference_internal()
@@ -261,9 +302,17 @@ fn resolve_direction(text: &str, target: &str) -> Option<(String, String, String
         } else {
             target.to_string()
         };
-        if source_lang == effective_target
-            || !llm::SUPPORTED_TARGET_LANGS.contains(&effective_target.as_str())
-        {
+        let target_supported = if engine == "m2m100" {
+            m2m100::SUPPORTED_TARGET_LANGS.contains(&effective_target.as_str())
+        } else {
+            llm::SUPPORTED_TARGET_LANGS.contains(&effective_target.as_str())
+        };
+        let source_supported = if engine == "m2m100" {
+            m2m100::SUPPORTED_TARGET_LANGS.contains(&source_lang.as_str())
+        } else {
+            true
+        };
+        if source_lang == effective_target || !target_supported || !source_supported {
             return None;
         }
         Some((
@@ -472,9 +521,14 @@ pub async fn process_pending_translations<R: Runtime>(app: AppHandle<R>) {
                         }
                     }),
                 )
+            } else if engine_kind == "m2m100" {
+                get_m2m100_engine().and_then(|engine| {
+                    engine
+                        .translate(&text, &source_lang_stream, &target_lang_stream)
+                        .map_err(|e| e.to_string())
+                })
             } else {
                 get_engine(&direction_for_task).and_then(|engine| {
-                    // 实时路径用贪心解码：句级输入质量已足够，速度优先（~0.3-1s/句）
                     engine.translate_greedy(&text).map_err(|e| e.to_string())
                 })
             }
