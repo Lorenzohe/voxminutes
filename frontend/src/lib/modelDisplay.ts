@@ -47,6 +47,12 @@ export function modelDesc(id: string, t: Messages): string | null {
       return t.setModelDescSenseVoice
     case 'x-asr-480ms':
       return t.setModelDescXAsr
+    case 'whisper-tiny':
+      return 'Whisper Tiny · 快速 / 低资源'
+    case 'whisper-small':
+      return '默认 / 均衡 · INT8 · CPU 稳定 · 意大利语会议推荐'
+    case 'whisper-medium':
+      return '高精度 · INT8 · CUDA 优先尝试 / CPU 回退 · 意大利语正式会议'
     case 'opus-mt-zh-en':
     case 'opus-mt-en-zh':
       return t.setModelDescOpusMt
@@ -74,6 +80,12 @@ export function modelDisplayName(id: string, t: Messages, fallback?: string): st
       return t.setModelNameSenseVoice
     case 'x-asr-480ms':
       return t.setModelNameXAsr
+    case 'whisper-tiny':
+      return 'Whisper Tiny Multilingual'
+    case 'whisper-small':
+      return 'Whisper Small INT8'
+    case 'whisper-medium':
+      return 'Whisper Medium INT8'
     case 'opus-mt-zh-en':
       return t.setModelNameOpusZhEn
     case 'opus-mt-en-zh':

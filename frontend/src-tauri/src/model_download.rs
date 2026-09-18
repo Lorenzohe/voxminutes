@@ -99,7 +99,7 @@ const MODELS: &[DownloadableModel] = &[
     },
     DownloadableModel {
         id: "whisper-small",
-        display_name: "Whisper Small Multilingual（高精度·含意大利语）",
+        display_name: "Whisper Small INT8（默认·均衡·含意大利语）",
         dir_name: "sherpa-onnx-whisper-small",
         sources: &[
             ModelSource::Files {
@@ -126,6 +126,37 @@ const MODELS: &[DownloadableModel] = &[
             "small-encoder.int8.onnx",
             "small-decoder.int8.onnx",
             "small-tokens.txt",
+        ],
+    },
+    DownloadableModel {
+        id: "whisper-medium",
+        display_name: "Whisper Medium INT8（高精度·意大利语会议）",
+        dir_name: "sherpa-onnx-whisper-medium",
+        sources: &[
+            ModelSource::Files {
+                base_url: "https://huggingface.co/csukuangfj/sherpa-onnx-whisper-medium",
+                resolve_path: HF_RESOLVE,
+                files: &[
+                    "medium-encoder.int8.onnx",
+                    "medium-decoder.int8.onnx",
+                    "medium-tokens.txt",
+                ],
+            },
+            ModelSource::Files {
+                base_url: "https://hf-mirror.com/csukuangfj/sherpa-onnx-whisper-medium",
+                resolve_path: HF_RESOLVE,
+                files: &[
+                    "medium-encoder.int8.onnx",
+                    "medium-decoder.int8.onnx",
+                    "medium-tokens.txt",
+                ],
+            },
+        ],
+        size_bytes: 946_000_000,
+        required_files: &[
+            "medium-encoder.int8.onnx",
+            "medium-decoder.int8.onnx",
+            "medium-tokens.txt",
         ],
     },
     DownloadableModel {

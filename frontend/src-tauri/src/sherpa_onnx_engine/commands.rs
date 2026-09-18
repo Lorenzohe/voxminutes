@@ -130,6 +130,7 @@ fn find_whisper_dir(model_name: &str) -> Option<PathBuf> {
     let base = get_models_dir();
     let preferred_names: &[&str] = match model_name {
         "whisper-small" => &["sherpa-onnx-whisper-small", "whisper-small"],
+        "whisper-medium" => &["sherpa-onnx-whisper-medium", "whisper-medium"],
         _ => &["sherpa-onnx-whisper-tiny", "whisper-tiny"],
     };
 
@@ -142,10 +143,10 @@ fn find_whisper_dir(model_name: &str) -> Option<PathBuf> {
 
     // Fallback scan remains model-specific so selecting Small can never
     // silently load Tiny (or vice versa).
-    let expected_fragment = if model_name == "whisper-small" {
-        "whisper-small"
-    } else {
-        "whisper-tiny"
+    let expected_fragment = match model_name {
+        "whisper-small" => "whisper-small",
+        "whisper-medium" => "whisper-medium",
+        _ => "whisper-tiny",
     };
     if let Ok(entries) = std::fs::read_dir(&base) {
         for entry in entries.flatten() {
@@ -236,7 +237,13 @@ pub async fn sherpa_onnx_get_models() -> Result<Vec<serde_json::Value>, String> 
             "whisper-small",
             376,
             "Whisper Small Multilingual INT8 (Sherpa-ONNX Rust)",
-            "本地多语言识别，支持意大利语；准确率优先，推荐会议使用",
+            "默认 / 均衡；意大利语会议推荐，CPU 稳定运行",
+        ),
+        (
+            "whisper-medium",
+            946,
+            "Whisper Medium Multilingual INT8 (Sherpa-ONNX Rust)",
+            "高精度模式；意大利语正式会议，CUDA 优先尝试并自动回退 CPU",
         ),
     ] {
         let whisper_status = if find_whisper_dir(name).is_some() {

@@ -50,6 +50,42 @@ pub struct SherpaOnnxEngine {
     model_type: AsrModelType,
 }
 
+fn create_whisper_recognizer_with_provider_fallback(
+    mut config: OfflineRecognizerConfig,
+    model_name: &str,
+) -> Result<(OfflineRecognizer, String)> {
+    let requested: &[&str] = if model_name == "whisper-medium" {
+        // Medium is the high-accuracy profile. Try CUDA first; stock Rust
+        // shared libraries may be CPU-only, so always fall back safely.
+        &["cuda", "cpu"]
+    } else {
+        // Small/Tiny remain the stable default path.
+        &["cpu"]
+    };
+
+    for provider in requested {
+        config.model_config.provider = Some((*provider).into());
+        log::info!(
+            "Whisper '{}' attempting execution provider: {}",
+            model_name,
+            provider
+        );
+        if let Some(recognizer) = OfflineRecognizer::create(&config) {
+            return Ok((recognizer, (*provider).to_string()));
+        }
+        log::warn!(
+            "Whisper '{}' provider '{}' unavailable; trying fallback",
+            model_name,
+            provider
+        );
+    }
+
+    Err(anyhow!(
+        "Failed to create OfflineRecognizer for Whisper '{}' with available providers",
+        model_name
+    ))
+}
+
 impl SherpaOnnxEngine {
     pub fn create_sense_voice(model_dir: &Path, model_name: &str) -> Result<Self> {
         let model_dir = strip_verbatim_prefix(model_dir);
@@ -128,17 +164,17 @@ impl SherpaOnnxEngine {
             enable_segment_timestamps: false,
         };
         config.model_config.tokens = Some(to_short_path_string(&tokens));
-        config.model_config.num_threads = 4;
-        config.model_config.provider = Some("cpu".into());
+        config.model_config.num_threads = if model_name == "whisper-medium" { 6 } else { 4 };
 
-        let recognizer = OfflineRecognizer::create(&config)
-            .ok_or_else(|| anyhow!("Failed to create OfflineRecognizer for Whisper"))?;
+        let (recognizer, requested_provider) =
+            create_whisper_recognizer_with_provider_fallback(config, model_name)?;
 
         log::info!(
-            "Whisper engine loaded: {} from {} (language: {})",
+            "Whisper engine loaded: {} from {} (language: {}, requested provider: {})",
             model_name,
             model_dir.display(),
-            if language_pref.is_empty() { "auto" } else { &language_pref }
+            if language_pref.is_empty() { "auto" } else { &language_pref },
+            requested_provider
         );
 
         Ok(Self {
