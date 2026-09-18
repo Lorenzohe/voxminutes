@@ -33,6 +33,15 @@ jobs:
             Move-Item pnpm-workspace.yaml pnpm-workspace.yaml.ci-disabled
           }
 
+      - name: Prepare FFmpeg binary for Tauri bundle
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path frontend/src-tauri/binaries | Out-Null
+          Invoke-WebRequest -Uri "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip" -OutFile ffmpeg.zip
+          Expand-Archive ffmpeg.zip -DestinationPath ffmpeg-temp -Force
+          $ffmpeg = Get-ChildItem -Path ffmpeg-temp -Recurse -Filter ffmpeg.exe | Select-Object -First 1
+          Copy-Item $ffmpeg.FullName frontend/src-tauri/binaries/ffmpeg-x86_64-pc-windows-msvc.exe
+
       - name: Install frontend dependencies
         working-directory: frontend
         run: pnpm install --frozen-lockfile
