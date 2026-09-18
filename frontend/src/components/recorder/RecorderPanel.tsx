@@ -238,12 +238,31 @@ export function RecorderControls() {
           <div className="w-[168px] rounded-md bg-muted/50 p-3 space-y-1.5 text-[11px] text-muted-foreground mt-1">
             <p className="truncate" title={selectedModel}>
               <span className="font-medium text-foreground">{t.recLabelAsr}</span>
-              {selectedModel === 'x-asr-480ms' ? t.recModelXAsr : selectedModel === 'sense-voice' ? t.recModelSenseVoice : selectedModel || t.recNoModel}
+              {selectedModel === 'x-asr-480ms'
+                ? t.recModelXAsr
+                : selectedModel === 'sense-voice'
+                  ? t.recModelSenseVoice
+                  : selectedModel === 'whisper-tiny'
+                    ? 'Whisper Tiny Multilingual'
+                    : selectedModel || t.recNoModel}
             </p>
-            {(selectedModel === 'x-asr-480ms' || selectedModel === 'sense-voice') && (
-              <p className="truncate" title={selectedModel === 'x-asr-480ms' ? t.recLangsXAsr : t.recLangsSenseVoice}>
+            {(selectedModel === 'x-asr-480ms' || selectedModel === 'sense-voice' || selectedModel === 'whisper-tiny') && (
+              <p
+                className="truncate"
+                title={
+                  selectedModel === 'x-asr-480ms'
+                    ? t.recLangsXAsr
+                    : selectedModel === 'sense-voice'
+                      ? t.recLangsSenseVoice
+                      : 'Italiano / English / Multilingual'
+                }
+              >
                 <span className="font-medium text-foreground">{t.recLabelLangs}</span>
-                {selectedModel === 'x-asr-480ms' ? t.recLangsXAsr : t.recLangsSenseVoice}
+                {selectedModel === 'x-asr-480ms'
+                  ? t.recLangsXAsr
+                  : selectedModel === 'sense-voice'
+                    ? t.recLangsSenseVoice
+                    : 'Italiano / English / Multilingual'}
               </p>
             )}
             <p className="truncate" title={defaultDevices.microphone || t.recNoDevice}>
