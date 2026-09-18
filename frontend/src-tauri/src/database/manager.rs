@@ -1,8 +1,8 @@
-use sqlx::{sqlite::SqlitePool, SqlitePool as Pool};
+use sqlx::SqlitePool;
 
 #[derive(Clone)]
 pub struct DatabaseManager {
-    pool: Pool,
+    pool: SqlitePool,
 }
 
 impl DatabaseManager {
@@ -12,5 +12,13 @@ impl DatabaseManager {
 
     pub fn pool(&self) -> &SqlitePool {
         &self.pool
+    }
+
+    pub async fn cleanup(&self) -> Result<(), sqlx::Error> {
+        sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
+            .execute(&self.pool)
+            .await?;
+        self.pool.close().await;
+        Ok(())
     }
 }
