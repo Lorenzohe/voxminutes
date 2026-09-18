@@ -7,6 +7,7 @@ use super::provider::TranscriptionError;
 use crate::audio::AudioChunk;
 use log::{error, info, warn};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Runtime};
@@ -113,6 +114,7 @@ pub fn start_transcription_task<R: Runtime>(
 
                 let whisper_live_mode = current_model.starts_with("whisper-");
                 let mut last_whisper_final_text = String::new();
+                let mut whisper_best_partials: HashMap<u64, String> = HashMap::new();
 
                 if initial_model_loaded {
                     info!(
@@ -180,7 +182,7 @@ pub fn start_transcription_task<R: Runtime>(
                             match transcribe_chunk_with_provider(&engine_clone, chunk, &app_clone).await {
                                 Ok((transcript, confidence_opt, is_partial)) => {
                                     let is_partial = is_partial || requested_partial;
-                                    let transcript = if whisper_live_mode
+                                    let mut transcript = if whisper_live_mode
                                         && !last_whisper_final_text.is_empty()
                                     {
                                         strip_whisper_cross_segment_overlap(
@@ -190,6 +192,36 @@ pub fn start_transcription_task<R: Runtime>(
                                     } else {
                                         transcript
                                     };
+
+                                    if whisper_live_mode {
+                                        if is_partial {
+                                            let replace_best = whisper_best_partials
+                                                .get(&sequence_id)
+                                                .map(|best| transcript_information_score(&transcript)
+                                                    > transcript_information_score(best))
+                                                .unwrap_or(true);
+                                            if replace_best && !transcript.trim().is_empty() {
+                                                whisper_best_partials
+                                                    .insert(sequence_id, transcript.clone());
+                                            }
+                                        } else if let Some(best_partial) =
+                                            whisper_best_partials.remove(&sequence_id)
+                                        {
+                                            if should_keep_partial_over_final(
+                                                &best_partial,
+                                                &transcript,
+                                            ) {
+                                                warn!(
+                                                    "Whisper final regression blocked for seq={}: final='{}' best_partial='{}'",
+                                                    sequence_id,
+                                                    transcript,
+                                                    best_partial
+                                                );
+                                                transcript = best_partial;
+                                            }
+                                        }
+                                    }
+
                                     if !transcript.trim().is_empty() {
                                         if whisper_live_mode && !is_partial {
                                             last_whisper_final_text = transcript.clone();
@@ -442,6 +474,41 @@ fn split_long_chunk(chunk: AudioChunk) -> Vec<AudioChunk> {
         .collect()
 }
 
+/// Rough information score used to remember the most complete partial snapshot.
+fn transcript_information_score(text: &str) -> usize {
+    let words = text.split_whitespace().filter(|w| !w.trim().is_empty()).count();
+    let chars = text.chars().filter(|c| !c.is_whitespace()).count();
+    words * 8 + chars
+}
+
+/// A final Whisper decode can occasionally regress to only the last few words of
+/// a segment even though an earlier sliding-window partial contained the full
+/// utterance. Keep the partial only when the regression is obvious; otherwise
+/// trust the final decode so normal Whisper corrections still work.
+fn should_keep_partial_over_final(partial: &str, final_text: &str) -> bool {
+    let partial = partial.trim();
+    let final_text = final_text.trim();
+    if partial.is_empty() || final_text.is_empty() {
+        return !partial.is_empty() && final_text.is_empty();
+    }
+
+    let partial_words = partial.split_whitespace().count();
+    let final_words = final_text.split_whitespace().count();
+    let partial_chars = partial.chars().filter(|c| !c.is_whitespace()).count();
+    let final_chars = final_text.chars().filter(|c| !c.is_whitespace()).count();
+
+    // Require a reasonably informative partial before protecting it.
+    if partial_words < 4 && partial_chars < 24 {
+        return false;
+    }
+
+    // Clear shrinkage: final retained less than ~60% of both word and character
+    // content, or collapsed to <=2 words while the partial had a full phrase.
+    (final_words * 100 < partial_words * 60
+        && final_chars * 100 < partial_chars * 65)
+        || (final_words <= 2 && partial_words >= 6)
+}
+
 /// Remove audio-overlap text between two finalized Whisper live windows.
 /// We require at least two matching words, or one long word, to avoid deleting
 /// legitimate short repetitions such as "no, no".
@@ -547,7 +614,31 @@ async fn transcribe_chunk_with_provider<R: Runtime>(
 
 #[cfg(test)]
 mod live_whisper_tests {
-    use super::strip_whisper_cross_segment_overlap;
+    use super::{should_keep_partial_over_final, strip_whisper_cross_segment_overlap};
+
+    #[test]
+    fn blocks_obvious_final_regression() {
+        assert!(should_keep_partial_over_final(
+            "This is a very important opportunity for you to learn the important things.",
+            "obviously"
+        ));
+        assert!(should_keep_partial_over_final(
+            "E viene usato per salutare una persona o piu persone.",
+            "una persona"
+        ));
+    }
+
+    #[test]
+    fn accepts_normal_final_correction() {
+        assert!(!should_keep_partial_over_final(
+            "Vorrei sapere se possiamo modificare questa machina",
+            "Vorrei sapere se possiamo modificare questa macchina"
+        ));
+        assert!(!should_keep_partial_over_final(
+            "Ciao come stai",
+            "Ciao, come stai?"
+        ));
+    }
 
     #[test]
     fn strips_two_word_overlap() {
