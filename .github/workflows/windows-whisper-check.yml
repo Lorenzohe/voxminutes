@@ -35,6 +35,16 @@ jobs:
           }
           '@ | Set-Content -Encoding UTF8 frontend/src-tauri/build/ffmpeg.rs
           New-Item -ItemType File -Force frontend/src-tauri/binaries/ffmpeg-x86_64-pc-windows-msvc.exe | Out-Null
+          New-Item -ItemType File -Force frontend/src-tauri/binaries/llama-helper-x86_64-pc-windows-msvc.exe | Out-Null
+          New-Item -ItemType Directory -Force frontend/src-tauri/resources-dll | Out-Null
+          New-Item -ItemType Directory -Force frontend/src-tauri/templates | Out-Null
+          foreach ($name in @('DirectML.dll','onnxruntime.dll','onnxruntime_providers_shared.dll','sherpa-onnx-c-api.dll','sherpa-onnx-cxx-api.dll')) {
+            New-Item -ItemType File -Force ("frontend/src-tauri/resources-dll/" + $name) | Out-Null
+          }
+          if (-not (Test-Path frontend/src-tauri/templates/ci-placeholder.json)) {
+            '{}' | Set-Content -Encoding UTF8 frontend/src-tauri/templates/ci-placeholder.json
+          }
+          New-Item -ItemType File -Force frontend/src-tauri/example_audio.wav | Out-Null
 
       - name: Rust check
         run: cargo check -p voxminutes
