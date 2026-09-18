@@ -28,11 +28,13 @@ jobs:
         shell: powershell
         run: |
           New-Item -ItemType Directory -Force frontend/src-tauri/build | Out-Null
+          New-Item -ItemType Directory -Force frontend/src-tauri/binaries | Out-Null
           @'
           pub fn ensure_ffmpeg_binary() {
               println!("cargo:warning=CI check: skipping FFmpeg bundling");
           }
           '@ | Set-Content -Encoding UTF8 frontend/src-tauri/build/ffmpeg.rs
+          New-Item -ItemType File -Force frontend/src-tauri/binaries/ffmpeg-x86_64-pc-windows-msvc.exe | Out-Null
 
       - name: Rust check
         run: cargo check -p voxminutes
