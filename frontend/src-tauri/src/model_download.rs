@@ -79,6 +79,25 @@ const MODELS: &[DownloadableModel] = &[
         required_files: &["model.onnx", "tokens.txt"],
     },
     DownloadableModel {
+        id: "whisper-tiny",
+        display_name: "Whisper Tiny Multilingual（含意大利语）",
+        dir_name: "sherpa-onnx-whisper-tiny",
+        sources: &[
+            ModelSource::Archive {
+                url: "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-whisper-tiny.tar.bz2",
+            },
+            ModelSource::Archive {
+                url: "https://gh-proxy.com/https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-whisper-tiny.tar.bz2",
+            },
+        ],
+        size_bytes: 260_000_000,
+        required_files: &[
+            "tiny-encoder.int8.onnx",
+            "tiny-decoder.int8.onnx",
+            "tiny-tokens.txt",
+        ],
+    },
+    DownloadableModel {
         id: "x-asr-480ms",
         display_name: "X-ASR 流式模型（中英，带标点，480ms）",
         dir_name: "sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-2026-06-05",
@@ -1262,7 +1281,7 @@ mod tests {
         }
 
         // Archive models: GitHub release first, gh-proxy mirror second.
-        for id in ["sense-voice", "x-asr-480ms"] {
+        for id in ["sense-voice", "whisper-tiny", "x-asr-480ms"] {
             let m = find_model(id).unwrap();
             assert_eq!(m.sources.len(), 2);
             match &m.sources[0] {
@@ -1312,6 +1331,10 @@ mod tests {
     fn import_kind_is_inferred_from_registry() {
         assert_eq!(
             import_kind(find_model("sense-voice").unwrap()),
+            ImportKind::Archive
+        );
+        assert_eq!(
+            import_kind(find_model("whisper-tiny").unwrap()),
             ImportKind::Archive
         );
         assert_eq!(
