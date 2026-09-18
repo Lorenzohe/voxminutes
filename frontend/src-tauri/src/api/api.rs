@@ -196,8 +196,8 @@ pub async fn api_get_recordings<R: Runtime>(
                 .map(|r| RecordingListItem {
                     id: r.id,
                     title: r.title,
-                    created_at: r.created_at.0.to_rfc3339(),
-                    updated_at: r.updated_at.0.to_rfc3339(),
+                    created_at: r.created_at.to_rfc3339(),
+                    updated_at: r.updated_at.to_rfc3339(),
                     folder_path: r.folder_path,
                 })
                 .collect();
@@ -354,8 +354,8 @@ pub async fn api_get_recording<R: Runtime>(
             Ok(RecordingDetails {
                 id: recording.id,
                 title: recording.title,
-                created_at: recording.created_at.0.to_rfc3339(),
-                updated_at: recording.updated_at.0.to_rfc3339(),
+                created_at: recording.created_at.to_rfc3339(),
+                updated_at: recording.updated_at.to_rfc3339(),
                 duration_ms: recording.duration_ms,
                 audio_path: recording.audio_path,
                 folder_path: recording.folder_path,
@@ -406,8 +406,8 @@ pub async fn api_get_recording_metadata<R: Runtime>(
             Ok(RecordingMetadata {
                 id: recording.id,
                 title: recording.title,
-                created_at: recording.created_at.0.to_rfc3339(),
-                updated_at: recording.updated_at.0.to_rfc3339(),
+                created_at: recording.created_at.to_rfc3339(),
+                updated_at: recording.updated_at.to_rfc3339(),
                 duration_ms: recording.duration_ms,
                 audio_path: recording.audio_path,
                 folder_path: recording.folder_path,
@@ -589,7 +589,7 @@ pub async fn api_save_transcript<R: Runtime>(
             end_ms: s.end_ms,
             speaker: s.speaker,
             source: s.source,
-            created_at: crate::database::models::DateTimeUtc(chrono::Utc::now()),
+            created_at: chrono::Utc::now(),
         })
         .collect();
 
@@ -1068,7 +1068,7 @@ fn render_markdown(recording: &Recording, segments: &[DbTranscriptSegment]) -> S
     let mut out = format!(
         "# {}\n\n- 创建时间：{}\n- 时长：{}\n\n---\n\n",
         recording.title,
-        recording.created_at.0.format("%Y-%m-%d %H:%M:%S"),
+        recording.created_at.format("%Y-%m-%d %H:%M:%S"),
         duration
     );
     for s in segments {
