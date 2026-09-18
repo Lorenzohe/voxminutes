@@ -98,6 +98,37 @@ const MODELS: &[DownloadableModel] = &[
         ],
     },
     DownloadableModel {
+        id: "whisper-small",
+        display_name: "Whisper Small Multilingual（高精度·含意大利语）",
+        dir_name: "sherpa-onnx-whisper-small",
+        sources: &[
+            ModelSource::Files {
+                base_url: "https://huggingface.co/csukuangfj/sherpa-onnx-whisper-small",
+                resolve_path: HF_RESOLVE,
+                files: &[
+                    "small-encoder.int8.onnx",
+                    "small-decoder.int8.onnx",
+                    "small-tokens.txt",
+                ],
+            },
+            ModelSource::Files {
+                base_url: "https://hf-mirror.com/csukuangfj/sherpa-onnx-whisper-small",
+                resolve_path: HF_RESOLVE,
+                files: &[
+                    "small-encoder.int8.onnx",
+                    "small-decoder.int8.onnx",
+                    "small-tokens.txt",
+                ],
+            },
+        ],
+        size_bytes: 376_000_000,
+        required_files: &[
+            "small-encoder.int8.onnx",
+            "small-decoder.int8.onnx",
+            "small-tokens.txt",
+        ],
+    },
+    DownloadableModel {
         id: "x-asr-480ms",
         display_name: "X-ASR 流式模型（中英，带标点，480ms）",
         dir_name: "sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-2026-06-05",

@@ -325,6 +325,10 @@ pub(crate) fn postprocess(text: &str, source_lang: &str, target_lang: &str) -> S
 /// on_token 提供时走 sidecar 流式协议，增量文本（未清洗的原始输出）逐个
 /// 回调；返回值始终是清洗后的完整译文。
 /// 阻塞调用，请放在 spawn_blocking 中执行。
+fn use_asr_correction_prompt(text: &str, asr_mode: bool) -> bool {
+    asr_mode && text.split_whitespace().count() > 8
+}
+
 pub fn translate(
     text: &str,
     direction: &str,
@@ -346,7 +350,13 @@ pub fn translate(
     let helper_exe = llama_sidecar::resolve_helper_exe()
         .ok_or_else(|| "本地推理引擎（llama-helper）未找到，请重新安装应用".to_string())?;
 
-    let prompt = build_prompt(text, source_lang, target_lang, asr_mode);
+    // Very short ASR utterances are usually complete phrases ("sono di Milano",
+    // "dove abiti?"). The ASR-correction prompt can over-interpret them, so use
+    // faithful direct translation for short inputs and reserve ASR correction
+    // for longer transcript segments.
+    let use_asr_correction = use_asr_correction_prompt(text, asr_mode);
+    let faithful_short = asr_mode && !use_asr_correction;
+    let prompt = build_prompt(text, source_lang, target_lang, use_asr_correction);
     // 输出预算按输入字符数估算（译文 token 数通常不超过原文字符数的两倍）
     let max_tokens = (text.chars().count() * 2).clamp(64, 1024) as u32;
     // 韩语目标重复率偏高，按参考实现加大惩罚
@@ -363,7 +373,7 @@ pub fn translate(
             prompt,
             max_tokens,
             context_size: CONTEXT_SIZE,
-            temperature: TEMPERATURE,
+            temperature: if faithful_short { 0.1 } else { TEMPERATURE },
             top_k: TOP_K,
             top_p: TOP_P,
             repeat_penalty: Some(repeat_penalty),
@@ -408,6 +418,16 @@ pub fn warmup() -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn short_asr_phrases_use_faithful_direct_translation() {
+        assert!(!use_asr_correction_prompt("sono di milano", true));
+        assert!(!use_asr_correction_prompt("Come si scrive il tuo nome?", true));
+        assert!(use_asr_correction_prompt(
+            "questa e una frase abbastanza lunga da richiedere una leggera correzione asr",
+            true
+        ));
+    }
 
     #[test]
     fn build_prompt_normal_zh_en() {

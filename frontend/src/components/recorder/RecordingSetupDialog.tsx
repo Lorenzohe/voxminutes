@@ -84,13 +84,15 @@ export function RecordingSetupDialog({ open, onOpenChange, onConfirm }: Recordin
     if (name === 'x-asr-480ms') return t.recModelXAsr
     if (name === 'sense-voice') return t.recModelSenseVoice
     if (name === 'whisper-tiny') return 'Whisper Tiny Multilingual'
+    if (name === 'whisper-small') return 'Whisper Small Multilingual'
     return name
   }
 
   const modelDescription = (name: string): string => {
     if (name === 'x-asr-480ms') return t.recXAsrDesc
     if (name === 'sense-voice') return t.recSenseVoiceDesc
-    if (name === 'whisper-tiny') return 'Multilingual Whisper · Italiano / English'
+    if (name === 'whisper-tiny') return '速度优先 · Italiano / English'
+    if (name === 'whisper-small') return '准确率优先 · 推荐意大利语会议'
     return ''
   }
 

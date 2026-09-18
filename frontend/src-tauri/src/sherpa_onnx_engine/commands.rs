@@ -126,20 +126,33 @@ fn find_sense_voice_dir() -> Option<PathBuf> {
     None
 }
 
-fn find_whisper_dir() -> Option<PathBuf> {
+fn find_whisper_dir(model_name: &str) -> Option<PathBuf> {
     let base = get_models_dir();
-    for name in &["sherpa-onnx-whisper-tiny", "whisper-tiny"] {
+    let preferred_names: &[&str] = match model_name {
+        "whisper-small" => &["sherpa-onnx-whisper-small", "whisper-small"],
+        _ => &["sherpa-onnx-whisper-tiny", "whisper-tiny"],
+    };
+
+    for name in preferred_names {
         let dir = base.join(name);
         if SherpaOnnxEngine::validate_whisper_model_dir(&dir) {
             return Some(dir);
         }
     }
+
+    // Fallback scan remains model-specific so selecting Small can never
+    // silently load Tiny (or vice versa).
+    let expected_fragment = if model_name == "whisper-small" {
+        "whisper-small"
+    } else {
+        "whisper-tiny"
+    };
     if let Ok(entries) = std::fs::read_dir(&base) {
         for entry in entries.flatten() {
             let path = entry.path();
             let name = entry.file_name().to_string_lossy().to_string();
             if path.is_dir()
-                && name.contains("whisper")
+                && name.contains(expected_fragment)
                 && SherpaOnnxEngine::validate_whisper_model_dir(&path)
             {
                 return Some(path);
@@ -211,31 +224,45 @@ pub async fn sherpa_onnx_get_models() -> Result<Vec<serde_json::Value>, String> 
         }));
     }
 
-    // Local multilingual Whisper model. This is the first local ASR option
-    // that explicitly supports Italian.
-    let whisper_status = if let Some(ref _dir) = find_whisper_dir() {
-        let loaded = SHERPA_ONNX_ENGINE
-            .lock()
-            .unwrap()
-            .as_ref()
-            .map(|e| e.get_model_name().starts_with("whisper-"))
-            .unwrap_or(false);
-        if loaded { "Loaded" } else { "Available" }
-    } else {
-        "Missing"
-    };
-    models.push(serde_json::json!({
-        "name": "whisper-tiny",
-        "status": whisper_status,
-        "size_mb": 250,
-        "languages": ["it", "en", "es", "fr", "de", "pt", "zh", "ja", "ko"],
-        "architecture": "Whisper Tiny Multilingual (Sherpa-ONNX Rust)",
-        "description": "本地多语言识别，支持意大利语；适合低延迟会议转写",
-        "has_punctuation": true,
-        "has_timestamps": false,
-        "has_hotwords": false,
-        "is_remote": false
-    }));
+    // Local multilingual Whisper models supporting Italian.
+    for (name, size_mb, architecture, description) in [
+        (
+            "whisper-tiny",
+            250,
+            "Whisper Tiny Multilingual (Sherpa-ONNX Rust)",
+            "本地多语言识别，支持意大利语；速度优先",
+        ),
+        (
+            "whisper-small",
+            376,
+            "Whisper Small Multilingual INT8 (Sherpa-ONNX Rust)",
+            "本地多语言识别，支持意大利语；准确率优先，推荐会议使用",
+        ),
+    ] {
+        let whisper_status = if find_whisper_dir(name).is_some() {
+            let loaded = SHERPA_ONNX_ENGINE
+                .lock()
+                .unwrap()
+                .as_ref()
+                .map(|e| e.get_model_name() == name)
+                .unwrap_or(false);
+            if loaded { "Loaded" } else { "Available" }
+        } else {
+            "Missing"
+        };
+        models.push(serde_json::json!({
+            "name": name,
+            "status": whisper_status,
+            "size_mb": size_mb,
+            "languages": ["it", "en", "es", "fr", "de", "pt", "zh", "ja", "ko"],
+            "architecture": architecture,
+            "description": description,
+            "has_punctuation": true,
+            "has_timestamps": false,
+            "has_hotwords": false,
+            "is_remote": false
+        }));
+    }
 
     // Remote Qwen3-ASR model (requires LAN server)
     // Only mark as "Available" if the remote endpoint has been configured;
@@ -379,7 +406,7 @@ pub async fn sherpa_onnx_load_model(model_name: String) -> Result<(), String> {
         }
         find_sense_voice_dir()
     } else if model_name.starts_with("whisper-") {
-        find_whisper_dir()
+        find_whisper_dir(&model_name)
     } else {
         find_model_subdir(&get_models_dir(), &model_name)
     }
