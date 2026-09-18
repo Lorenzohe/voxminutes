@@ -10,6 +10,7 @@
 use anyhow::{anyhow, Result};
 use ort::session::Session;
 use ort::value::Tensor;
+use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Mutex;
 use tokenizers::Tokenizer;
@@ -28,6 +29,88 @@ const DECODER_LAYERS: usize = 12;
 const ATTENTION_HEADS: i64 = 16;
 const HEAD_DIM: i64 = 64;
 const MAX_NEW_TOKENS: usize = 192;
+
+fn sanitize_bpe_merges(value: &mut serde_json::Value) -> usize {
+    let vocab: HashSet<String> = value
+        .get("model")
+        .and_then(|m| m.get("vocab"))
+        .and_then(|v| v.as_object())
+        .map(|v| v.keys().cloned().collect())
+        .unwrap_or_default();
+
+    if vocab.is_empty() {
+        return 0;
+    }
+
+    let Some(merges) = value
+        .get_mut("model")
+        .and_then(|m| m.get_mut("merges"))
+        .and_then(|m| m.as_array_mut())
+    else {
+        return 0;
+    };
+
+    let before = merges.len();
+    merges.retain(|entry| {
+        let pair: Option<(&str, &str)> = match entry {
+            serde_json::Value::Array(parts) if parts.len() == 2 => {
+                Some((parts[0].as_str()?, parts[1].as_str()?))
+            }
+            serde_json::Value::String(rule) => rule
+                .split_once(' ')
+                .map(|(left, right)| (left, right)),
+            _ => None,
+        };
+
+        let Some((left, right)) = pair else {
+            return false;
+        };
+
+        // Hugging Face tokenizers requires both sides of every BPE merge,
+        // and the token produced by that merge, to exist in model.vocab.
+        // Some Transformers.js fast-tokenizer exports contain stale merge
+        // rules (e.g. a literal "8") that violate this invariant.
+        let merged = format!("{}{}", left, right);
+        vocab.contains(left) && vocab.contains(right) && vocab.contains(&merged)
+    });
+    before - merges.len()
+}
+
+fn load_tokenizer_compat(path: &Path) -> Result<Tokenizer> {
+    let raw = std::fs::read_to_string(path)
+        .map_err(|e| anyhow!("读取 M2M100 tokenizer.json 失败: {}", e))?;
+
+    // Prefer the file unchanged. This keeps us compatible if the upstream
+    // tokenizer is fixed in a future revision.
+    match Tokenizer::from_bytes(raw.as_bytes()) {
+        Ok(tokenizer) => return Ok(tokenizer),
+        Err(original_error) => {
+            log::warn!(
+                "M2M100 tokenizer direct load failed: {}. Trying BPE merge compatibility cleanup.",
+                original_error
+            );
+        }
+    }
+
+    let mut value: serde_json::Value = serde_json::from_str(&raw)
+        .map_err(|e| anyhow!("解析 M2M100 tokenizer.json 失败: {}", e))?;
+    let removed = sanitize_bpe_merges(&mut value);
+    if removed == 0 {
+        return Err(anyhow!(
+            "加载 M2M100 tokenizer 失败，且未发现可修复的 BPE merge 规则"
+        ));
+    }
+
+    log::warn!(
+        "M2M100 tokenizer compatibility cleanup removed {} invalid BPE merge rule(s)",
+        removed
+    );
+    let patched = serde_json::to_vec(&value)
+        .map_err(|e| anyhow!("重写 M2M100 tokenizer.json 失败: {}", e))?;
+
+    Tokenizer::from_bytes(&patched)
+        .map_err(|e| anyhow!("加载兼容处理后的 M2M100 tokenizer 失败: {}", e))
+}
 
 pub struct M2M100Engine {
     encoder: Mutex<Session>,
@@ -58,8 +141,7 @@ impl M2M100Engine {
             .map_err(|e| anyhow!("配置 M2M100 decoder 线程失败: {}", e))?
             .commit_from_file(&decoder_path)
             .map_err(|e| anyhow!("加载 M2M100 decoder 失败: {}", e))?;
-        let tokenizer = Tokenizer::from_file(&tokenizer_path)
-            .map_err(|e| anyhow!("加载 M2M100 tokenizer 失败: {}", e))?;
+        let tokenizer = load_tokenizer_compat(&tokenizer_path)?;
 
         let enc_inputs: Vec<String> = encoder.inputs.iter().map(|i| i.name.clone()).collect();
         let dec_inputs: Vec<String> = decoder.inputs.iter().map(|i| i.name.clone()).collect();
@@ -337,6 +419,27 @@ struct StepOutput {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn invalid_bpe_merges_are_filtered_for_transformers_js_compatibility() {
+        let mut value = serde_json::json!({
+            "model": {
+                "vocab": {
+                    "a": 0,
+                    "b": 1,
+                    "ab": 2
+                },
+                "merges": [
+                    ["a", "b"],
+                    ["8", "a"],
+                    ["a", "missing"]
+                ]
+            }
+        });
+        let removed = sanitize_bpe_merges(&mut value);
+        assert_eq!(removed, 2);
+        assert_eq!(value["model"]["merges"].as_array().unwrap().len(), 1);
+    }
 
     #[test]
     fn realtime_languages_cover_italian_chinese() {
