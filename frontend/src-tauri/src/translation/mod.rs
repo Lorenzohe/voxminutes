@@ -312,13 +312,19 @@ pub fn queue_translation<R: Runtime>(app: &AppHandle<R>, text: &str, sequence_id
         return;
     }
     if let Ok(mut q) = TRANSLATE_QUEUE.lock() {
-        // A committed final supersedes any not-yet-processed preview for the same row.
+        // A committed final is authoritative. Drop stale previews for the same
+        // row and prioritize finals ahead of all queued partial previews while
+        // preserving FIFO order among finals.
         q.retain(|task| !(task.sequence_id == sequence_id && task.is_partial));
-        q.push_back(TranslateTask {
-            text,
-            sequence_id,
-            is_partial: false,
-        });
+        let insert_at = q.iter().position(|task| task.is_partial).unwrap_or(q.len());
+        q.insert(
+            insert_at,
+            TranslateTask {
+                text,
+                sequence_id,
+                is_partial: false,
+            },
+        );
     }
     if let Ok(mut seen) = TRANSLATE_SEEN.lock() {
         seen.insert(sequence_id);
@@ -350,7 +356,15 @@ pub fn queue_partial_translation<R: Runtime>(
     }
 
     if let Ok(mut q) = TRANSLATE_QUEUE.lock() {
-        q.retain(|task| !(task.sequence_id == sequence_id && task.is_partial));
+        // Never let preview work delay committed translations.
+        if q.iter().any(|task| !task.is_partial) {
+            return;
+        }
+
+        // Realtime preview is best-effort: keep only the newest pending partial
+        // across the whole meeting. Older previews are obsolete once newer ASR
+        // text exists and would only create translation backlog.
+        q.retain(|task| !task.is_partial);
         q.push_back(TranslateTask {
             text,
             sequence_id,
@@ -438,6 +452,12 @@ pub async fn process_pending_translations<R: Runtime>(app: AppHandle<R>) {
                         {
                             tokens_since_emit = 0;
                             last_emit = std::time::Instant::now();
+                            // If a committed final for this sequence arrived
+                            // while this preview was generating, the preview is
+                            // stale and must not overwrite the final UI state.
+                            if task_is_partial && translation_seen(seq) {
+                                return;
+                            }
                             let update = TranslateUpdate {
                                 sequence_id: seq,
                                 original_text: original_for_stream.clone(),
@@ -463,6 +483,13 @@ pub async fn process_pending_translations<R: Runtime>(app: AppHandle<R>) {
 
         match result {
             Ok(Ok(translated)) => {
+                if task_is_partial && translation_seen(seq) {
+                    log::debug!(
+                        "Dropping stale partial translation for seq={} because final is queued",
+                        seq
+                    );
+                    continue;
+                }
                 let update = TranslateUpdate {
                     sequence_id: seq,
                     original_text: task.text.clone(),
@@ -488,6 +515,45 @@ pub async fn process_pending_translations<R: Runtime>(app: AppHandle<R>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn final_tasks_are_prioritized_ahead_of_partials() {
+        let mut q = VecDeque::new();
+        q.push_back(TranslateTask {
+            text: "preview".into(),
+            sequence_id: 1,
+            is_partial: true,
+        });
+        let insert_at = q.iter().position(|task| task.is_partial).unwrap_or(q.len());
+        q.insert(
+            insert_at,
+            TranslateTask {
+                text: "final".into(),
+                sequence_id: 1,
+                is_partial: false,
+            },
+        );
+        assert!(!q[0].is_partial);
+        assert!(q[1].is_partial);
+    }
+
+    #[test]
+    fn newest_partial_replaces_older_pending_preview() {
+        let mut q = VecDeque::new();
+        q.push_back(TranslateTask {
+            text: "old preview".into(),
+            sequence_id: 1,
+            is_partial: true,
+        });
+        q.retain(|task| !task.is_partial);
+        q.push_back(TranslateTask {
+            text: "new preview".into(),
+            sequence_id: 2,
+            is_partial: true,
+        });
+        assert_eq!(q.len(), 1);
+        assert_eq!(q[0].sequence_id, 2);
+    }
 
     #[test]
     fn detect_source_lang_hangul_is_ko() {
