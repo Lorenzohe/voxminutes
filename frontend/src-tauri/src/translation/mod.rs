@@ -703,12 +703,14 @@ mod tests {
             text: "old preview".into(),
             sequence_id: 1,
             is_partial: true,
+            context_before: None,
         });
         q.retain(|task| !task.is_partial);
         q.push_back(TranslateTask {
             text: "new preview".into(),
             sequence_id: 2,
             is_partial: true,
+            context_before: None,
         });
         assert_eq!(q.len(), 1);
         assert_eq!(q[0].sequence_id, 2);
