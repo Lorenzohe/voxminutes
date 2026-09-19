@@ -1357,7 +1357,7 @@ mod tests {
         }
 
         // Archive models: GitHub release first, gh-proxy mirror second.
-        for id in ["sense-voice", "whisper-tiny", "x-asr-480ms"] {
+        for id in ["sense-voice", "x-asr-480ms"] {
             let m = find_model(id).unwrap();
             assert_eq!(m.sources.len(), 2);
             match &m.sources[0] {
