@@ -499,7 +499,7 @@ pub async fn start_recording_with_meeting_name<R: Runtime>(
         info!("🎙️ X-ASR mode: VAD will be bypassed for continuous streaming");
     }
     if whisper_live_preview {
-        info!("🎙️ Whisper live preview enabled: 4s partial snapshots + 12s safety rollover");
+        info!("🎙️ Whisper live preview enabled: 4s partial snapshots + 15s safety rollover");
     }
     manager.set_whisper_live_preview(whisper_live_preview);
 
