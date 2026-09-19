@@ -338,6 +338,13 @@ pub fn queue_translation<R: Runtime>(app: &AppHandle<R>, text: &str, sequence_id
                 is_partial: false,
             },
         );
+        log::info!(
+            "Translation queued: seq={} queue_len={} engine={} target={}",
+            sequence_id,
+            q.len(),
+            current_engine(),
+            target
+        );
     }
     if let Ok(mut seen) = TRANSLATE_SEEN.lock() {
         seen.insert(sequence_id);
@@ -459,6 +466,15 @@ pub async fn process_pending_translations<R: Runtime>(app: AppHandle<R>) {
         let original_for_stream = task.text.clone();
         let source_lang_stream = source_lang.clone();
         let target_lang_stream = effective_target.clone();
+        let started_at = std::time::Instant::now();
+        log::info!(
+            "Translation start: seq={} engine={} direction={} chars={}",
+            seq,
+            engine_kind,
+            direction,
+            task.text.chars().count()
+        );
+
         let result = tokio::task::spawn_blocking(move || {
             if engine_kind == "hymt2" {
                 // Hy-MT2 LLM 引擎：走 llama-helper sidecar，ASR 模式指令；
@@ -508,6 +524,12 @@ pub async fn process_pending_translations<R: Runtime>(app: AppHandle<R>) {
 
         match result {
             Ok(Ok(translated)) => {
+                log::info!(
+                    "Translation done: seq={} elapsed_ms={} output_chars={}",
+                    seq,
+                    started_at.elapsed().as_millis(),
+                    translated.chars().count()
+                );
                 if task_is_partial && translation_seen(seq) {
                     log::debug!(
                         "Dropping stale partial translation for seq={} because final is queued",
@@ -528,10 +550,20 @@ pub async fn process_pending_translations<R: Runtime>(app: AppHandle<R>) {
                 }
             }
             Ok(Err(e)) => {
-                log::warn!("Translation failed for seq={}: {}", seq, e);
+                log::warn!(
+                    "Translation failed: seq={} elapsed_ms={} error={}",
+                    seq,
+                    started_at.elapsed().as_millis(),
+                    e
+                );
             }
             Err(e) => {
-                log::warn!("Translation task join error: {}", e);
+                log::warn!(
+                    "Translation task join error: seq={} elapsed_ms={} error={}",
+                    seq,
+                    started_at.elapsed().as_millis(),
+                    e
+                );
             }
         }
     }
