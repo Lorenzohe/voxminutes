@@ -175,9 +175,21 @@ export function useRecorder() {
       try {
         const modelToUse = options.modelName || DEFAULT_ASR_MODEL
 
-        // 先写语言偏好：SenseVoice 引擎在模型加载时读取该偏好构造识别器
-        if (options.language) {
-          await setLanguagePreference(options.language).catch(() => {})
+        // Final guard at the IPC boundary. In the Italian realtime
+        // Whisper + Hy-MT2 workflow, never let an accidental Auto value reach
+        // the recognizer. Explicitly selected English is still preserved.
+        const appState = useAppStore.getState()
+        const languageToUse =
+          modelToUse.startsWith('whisper-') &&
+          options.language === 'auto' &&
+          appState.translateEnabled &&
+          appState.translationEngine === 'hymt2'
+            ? 'it'
+            : options.language
+
+        // 先写语言偏好：识别器在模型加载时读取该偏好构造识别器
+        if (languageToUse) {
+          await setLanguagePreference(languageToUse).catch(() => {})
         }
         await sherpaOnnxLoadModel(modelToUse)
         await apiSaveTranscriptConfig(
