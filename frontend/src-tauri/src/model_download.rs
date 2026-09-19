@@ -353,12 +353,11 @@ pub(crate) fn summary_model_installed(model_id: &str) -> bool {
     }
 }
 
-pub const HY_MT2_MODEL_ID: &str = "hy-mt2-1.8b-q6_k";
-pub const HY_MT2_FALLBACK_MODEL_ID: &str = "hy-mt2-1.8b-q4_k_m";
+pub const HY_MT2_Q6_MODEL_ID: &str = "hy-mt2-1.8b-q6_k";
+pub const HY_MT2_Q4_MODEL_ID: &str = "hy-mt2-1.8b-q4_k_m";
 
-/// Whether the realtime Hy-MT2 Q6_K translation model is installed.
-pub(crate) fn hy_mt2_installed() -> bool {
-    match find_model(HY_MT2_MODEL_ID) {
+fn hy_mt2_model_installed(model_id: &str) -> bool {
+    match find_model(model_id) {
         Some(m) => is_installed(
             &crate::sherpa_onnx_engine::commands::resolved_models_dir(),
             m,
@@ -367,15 +366,24 @@ pub(crate) fn hy_mt2_installed() -> bool {
     }
 }
 
-/// Whether the lighter Hy-MT2 Q4_K_M fallback model is installed.
-pub(crate) fn hy_mt2_offline_installed() -> bool {
-    match find_model(HY_MT2_FALLBACK_MODEL_ID) {
-        Some(m) => is_installed(
-            &crate::sherpa_onnx_engine::commands::resolved_models_dir(),
-            m,
-        ),
-        None => false,
+/// Whether the selected Hy-MT2 engine's model is installed.
+/// Legacy "hymt2" maps to Q6.
+pub(crate) fn hy_mt2_installed_for_engine(engine: &str) -> bool {
+    match engine {
+        "hymt2-q4" => hy_mt2_model_installed(HY_MT2_Q4_MODEL_ID),
+        "hymt2" | "hymt2-q6" => hy_mt2_model_installed(HY_MT2_Q6_MODEL_ID),
+        _ => false,
     }
+}
+
+/// Backward-compatible Q6 check used by older call sites.
+pub(crate) fn hy_mt2_installed() -> bool {
+    hy_mt2_model_installed(HY_MT2_Q6_MODEL_ID)
+}
+
+/// Backward-compatible Q4 check.
+pub(crate) fn hy_mt2_offline_installed() -> bool {
+    hy_mt2_model_installed(HY_MT2_Q4_MODEL_ID)
 }
 
 #[derive(Debug, Clone, Serialize)]
