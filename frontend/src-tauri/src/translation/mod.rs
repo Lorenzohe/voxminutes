@@ -238,14 +238,66 @@ static TRANSLATE_QUEUE: LazyLock<Mutex<VecDeque<TranslateTask>>> =
 static TRANSLATE_SEEN: LazyLock<Mutex<HashSet<u64>>> =
     LazyLock::new(|| Mutex::new(HashSet::new()));
 
-/// 上一个 committed final 原文。仅给 1-2 词的 Hy-MT2 final 做词义消歧，
+/// 上一个 committed final 原文。给极短 final 或跨段未完成语义做词义消歧，
 /// 不改变字幕时间轴，也不把上下文内容并入当前译文。
 static LAST_FINAL_SOURCE: LazyLock<Mutex<Option<String>>> =
     LazyLock::new(|| Mutex::new(None));
 
+fn normalize_context_word(word: &str) -> String {
+    word.chars()
+        .filter(|c| c.is_alphanumeric() || *c == '\'' || *c == '’')
+        .flat_map(|c| c.to_lowercase())
+        .collect()
+}
+
 fn is_short_context_fragment(text: &str) -> bool {
     let words = text.split_whitespace().filter(|w| !w.trim().is_empty()).count();
     words > 0 && words <= 2 && text.chars().filter(|c| c.is_alphanumeric()).count() <= 24
+}
+
+/// Detect a previous ASR final that clearly stops on an Italian connector or
+/// negation. The next final should then inherit it as context even when the
+/// current segment is not itself short, e.g.:
+///   "per oggi non" + "voglio più lavorare..."
+fn previous_final_needs_context(previous: &str) -> bool {
+    let Some(last) = previous.split_whitespace().last() else {
+        return false;
+    };
+    matches!(
+        normalize_context_word(last).as_str(),
+        "non"
+            | "niente"
+            | "senza"
+            | "mai"
+            | "per"
+            | "di"
+            | "che"
+            | "e"
+            | "ed"
+            | "ma"
+            | "quindi"
+            | "se"
+            | "quando"
+            | "mentre"
+            | "con"
+            | "a"
+            | "da"
+            | "in"
+            | "su"
+            | "del"
+            | "della"
+            | "dei"
+            | "delle"
+            | "al"
+            | "alla"
+            | "nel"
+            | "nella"
+    )
+}
+
+fn should_attach_previous_context(current: &str, previous: Option<&str>) -> bool {
+    is_short_context_fragment(current)
+        || previous.map(previous_final_needs_context).unwrap_or(false)
 }
 
 /// 新录音开始（sequence 重置）：清空待译队列与已见集合。
@@ -360,11 +412,14 @@ pub fn queue_translation<R: Runtime>(app: &AppHandle<R>, text: &str, sequence_id
     }
 
     let engine_kind = current_engine();
-    let context_before = if engine_kind == "hymt2" && is_short_context_fragment(&text) {
-        LAST_FINAL_SOURCE
-            .lock()
-            .ok()
-            .and_then(|last| last.clone())
+    let previous_final = LAST_FINAL_SOURCE
+        .lock()
+        .ok()
+        .and_then(|last| last.clone());
+    let context_before = if engine_kind == "hymt2"
+        && should_attach_previous_context(&text, previous_final.as_deref())
+    {
+        previous_final.clone()
     } else {
         None
     };
@@ -671,6 +726,27 @@ mod tests {
         assert!(is_short_context_fragment("Ho fatto"));
         assert!(!is_short_context_fragment("forse potrei andare in palestra"));
         assert!(!is_short_context_fragment(""));
+    }
+
+    #[test]
+    fn dangling_italian_connector_requests_context() {
+        assert!(previous_final_needs_context("per oggi non"));
+        assert!(previous_final_needs_context("visto che"));
+        assert!(previous_final_needs_context("adesso è il momento di"));
+        assert!(!previous_final_needs_context("oggi è stata una giornata lunga."));
+        assert!(!previous_final_needs_context("posso rilassarmi un po'."));
+    }
+
+    #[test]
+    fn normal_length_current_gets_context_after_dangling_previous() {
+        assert!(should_attach_previous_context(
+            "voglio più lavorare, adesso è il momento di rilassarmi",
+            Some("per oggi non")
+        ));
+        assert!(!should_attach_previous_context(
+            "oggi c'è il sole",
+            Some("la giornata è finita.")
+        ));
     }
 
     #[test]
