@@ -78,25 +78,7 @@ const MODELS: &[DownloadableModel] = &[
         size_bytes: 896_000_000,
         required_files: &["model.onnx", "tokens.txt"],
     },
-    DownloadableModel {
-        id: "whisper-tiny",
-        display_name: "Whisper Tiny Multilingual（含意大利语）",
-        dir_name: "sherpa-onnx-whisper-tiny",
-        sources: &[
-            ModelSource::Archive {
-                url: "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-whisper-tiny.tar.bz2",
-            },
-            ModelSource::Archive {
-                url: "https://gh-proxy.com/https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-whisper-tiny.tar.bz2",
-            },
-        ],
-        size_bytes: 260_000_000,
-        required_files: &[
-            "tiny-encoder.int8.onnx",
-            "tiny-decoder.int8.onnx",
-            "tiny-tokens.txt",
-        ],
-    },
+
     DownloadableModel {
         id: "whisper-small",
         display_name: "Whisper Small INT8（默认·均衡·含意大利语）",
@@ -224,60 +206,8 @@ const MODELS: &[DownloadableModel] = &[
         size_bytes: 120_000_000,
         required_files: &["encoder_model_int8.onnx", "decoder_model_merged_int8.onnx", "tokenizer.json"],
     },
-    DownloadableModel {
-        id: "opus-mt-it-en",
-        display_name: "OPUS-MT 翻译模型（意大利语 → 英语，实时链路）",
-        dir_name: "opus-mt-it-en",
-        sources: &[
-            ModelSource::Files {
-                base_url: "https://huggingface.co/Xenova/opus-mt-it-en",
-                resolve_path: HF_RESOLVE,
-                files: OPUS_MT_FILES,
-            },
-            ModelSource::Files {
-                base_url: "https://hf-mirror.com/Xenova/opus-mt-it-en",
-                resolve_path: HF_RESOLVE,
-                files: OPUS_MT_FILES,
-            },
-        ],
-        size_bytes: 145_000_000,
-        required_files: &[
-            "encoder_model_int8.onnx",
-            "decoder_model_merged_int8.onnx",
-            "tokenizer.json",
-        ],
-    },
-    DownloadableModel {
-        id: "m2m100-418m-int8",
-        display_name: "M2M100 418M INT8（实验性·暂不用于实时会议）",
-        dir_name: "m2m100-418m-int8",
-        sources: &[
-            ModelSource::Files {
-                base_url: "https://huggingface.co/Xenova/m2m100_418M",
-                resolve_path: HF_RESOLVE,
-                files: &[
-                    "onnx/encoder_model_quantized.onnx",
-                    "onnx/decoder_model_merged_quantized.onnx",
-                    "tokenizer.json",
-                ],
-            },
-            ModelSource::Files {
-                base_url: "https://hf-mirror.com/Xenova/m2m100_418M",
-                resolve_path: HF_RESOLVE,
-                files: &[
-                    "onnx/encoder_model_quantized.onnx",
-                    "onnx/decoder_model_merged_quantized.onnx",
-                    "tokenizer.json",
-                ],
-            },
-        ],
-        size_bytes: 640_000_000,
-        required_files: &[
-            "encoder_model_quantized.onnx",
-            "decoder_model_merged_quantized.onnx",
-            "tokenizer.json",
-        ],
-    },
+
+
     // Local meeting-summary LLM (GGUF, runs via the llama helper).
     DownloadableModel {
         id: "qwen2.5-3b-instruct-q4_k_m",
@@ -415,19 +345,6 @@ pub(crate) fn summary_model_dir_name(model_id: &str) -> Option<&'static str> {
 /// Whether all required files of the given model are installed.
 pub(crate) fn summary_model_installed(model_id: &str) -> bool {
     match find_model(model_id) {
-        Some(m) => is_installed(
-            &crate::sherpa_onnx_engine::commands::resolved_models_dir(),
-            m,
-        ),
-        None => false,
-    }
-}
-
-/// Hy-MT2 LLM 翻译模型 id（MODELS 注册表中的唯一条目）。
-pub const M2M100_MODEL_ID: &str = "m2m100-418m-int8";
-
-pub(crate) fn m2m100_installed() -> bool {
-    match find_model(M2M100_MODEL_ID) {
         Some(m) => is_installed(
             &crate::sherpa_onnx_engine::commands::resolved_models_dir(),
             m,
@@ -1490,10 +1407,6 @@ mod tests {
     fn import_kind_is_inferred_from_registry() {
         assert_eq!(
             import_kind(find_model("sense-voice").unwrap()),
-            ImportKind::Archive
-        );
-        assert_eq!(
-            import_kind(find_model("whisper-tiny").unwrap()),
             ImportKind::Archive
         );
         assert_eq!(
