@@ -21,6 +21,11 @@ pub struct ContinuousVadProcessor {
     buffer: Vec<f32>,
     speech_segments: VecDeque<SpeechSegment>,
     current_speech: Vec<f32>,
+    // Raw 16 kHz audio immediately before Silero raises SpeechStart. Live
+    // Whisper snapshots/rollovers use current_speech rather than Silero's
+    // completed-segment samples, so without this history a quiet sentence
+    // onset can be clipped before the VAD transition arrives.
+    pre_speech_history: VecDeque<f32>,
     in_speech: bool,
     processed_samples: usize,
     speech_start_sample: usize,
@@ -94,6 +99,7 @@ impl ContinuousVadProcessor {
             buffer: Vec::with_capacity(vad_chunk_size * 2),
             speech_segments: VecDeque::new(),
             current_speech: Vec::new(),
+            pre_speech_history: VecDeque::with_capacity(16_000),
             in_speech: false,
             processed_samples: 0,
             speech_start_sample: 0,
@@ -331,12 +337,21 @@ impl ContinuousVadProcessor {
                         self.last_logged_state = true;
                     }
                     self.in_speech = true;
-                    // Silero VAD timestamp is absolute/cumulative (ms since VAD session start),
-                    // on the same axis as processed_samples — use it directly. (Previously this
-                    // added processed_samples on top, double-counting and producing ~2x start
-                    // times for force-ended flush segments.)
-                    self.speech_start_sample = (timestamp_ms as u64 * 16000 / 1000) as usize;
+
+                    // Seed the live Whisper window with up to one second of
+                    // audio from immediately before the VAD transition. Silero
+                    // already supplies pre-speech padding for naturally ended
+                    // segments, but partial snapshots and the 15s rollover path
+                    // use current_speech directly and otherwise lose that
+                    // padding. This is exactly where quiet sentence starts can
+                    // disappear.
+                    let pre_roll_len = self.pre_speech_history.len();
+                    self.speech_start_sample =
+                        self.processed_samples.saturating_sub(pre_roll_len);
                     self.current_speech.clear();
+                    self.current_speech
+                        .extend(self.pre_speech_history.iter().copied());
+                    self.pre_speech_history.clear();
                     self.speech_has_rolled_over = false;
                 }
                 VadTransition::SpeechEnd { start_timestamp_ms, end_timestamp_ms, samples } => {
@@ -395,9 +410,17 @@ impl ContinuousVadProcessor {
             }
         }
 
-        // Accumulate speech if we're currently in a speech state
+        // Accumulate speech if we're currently in a speech state. Otherwise
+        // retain a short rolling history so the next SpeechStart can include a
+        // quiet/soft onset that Silero detects a little late.
         if self.in_speech {
             self.current_speech.extend_from_slice(chunk);
+        } else {
+            const PRE_SPEECH_HISTORY_SAMPLES: usize = 16_000; // 1.0s at 16 kHz
+            self.pre_speech_history.extend(chunk.iter().copied());
+            while self.pre_speech_history.len() > PRE_SPEECH_HISTORY_SAMPLES {
+                self.pre_speech_history.pop_front();
+            }
         }
 
         self.processed_samples += chunk.len();
