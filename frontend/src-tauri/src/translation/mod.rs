@@ -536,7 +536,7 @@ pub fn queue_partial_translation<R: Runtime>(
         .lock()
         .map(|t| t.clone())
         .unwrap_or_else(|_| "en".to_string());
-    let Some((direction, _, _)) = resolve_direction(&text, &target) else {
+    let Some((_direction, _, _)) = resolve_direction(&text, &target) else {
         return;
     };
     if let Ok(mut q) = TRANSLATE_QUEUE.lock() {
