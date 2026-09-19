@@ -76,9 +76,10 @@ function useRecorderInit() {
       setTranslationHomeLang(home).catch(() => {}),
     ])
       .then(([engine]) => {
-        if (engine === 'm2m100') {
-          useAppStore.getState().setTranslationEngine('hymt2')
-          ipcSetTranslationEngine('hymt2').catch(() => {})
+        const rawEngine = engine as string | null
+        if (rawEngine === 'm2m100' || rawEngine === 'hymt2') {
+          useAppStore.getState().setTranslationEngine('hymt2-q6')
+          ipcSetTranslationEngine('hymt2-q6').catch(() => {})
         } else if (engine) {
           useAppStore.getState().setTranslationEngine(engine)
         }
@@ -235,7 +236,8 @@ export function RecorderControls() {
                 title={t.recTranslateEngine}
               >
                 <option value="opus">{t.recEngineOpus}</option>
-                <option value="hymt2">{t.recEngineHymt2}</option>
+                <option value="hymt2-q4">HY-MT2-Q4</option>
+                <option value="hymt2-q6">HY-MT2-Q6</option>
               </select>
             </>
           )}
