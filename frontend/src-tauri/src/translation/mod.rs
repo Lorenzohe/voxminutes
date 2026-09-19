@@ -260,11 +260,37 @@ fn is_short_context_fragment(text: &str) -> bool {
 /// current segment is not itself short, e.g.:
 ///   "per oggi non" + "voglio più lavorare..."
 fn previous_final_needs_context(previous: &str) -> bool {
-    let Some(last) = previous.split_whitespace().last() else {
+    let normalized_words: Vec<String> = previous
+        .split_whitespace()
+        .map(normalize_context_word)
+        .filter(|word| !word.is_empty())
+        .collect();
+    let Some(last) = normalized_words.last() else {
         return false;
     };
+
+    // Negation/copula groups are especially important across Whisper segment
+    // boundaries. For example, "non è" + "stata una giornata corta" must keep
+    // the negation available to the translator even though overlap dedupe
+    // removes "non è" from the next visible transcript segment.
+    let semantic_tail = normalized_words
+        .iter()
+        .rev()
+        .take(3)
+        .rev()
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(" ");
+    if matches!(
+        semantic_tail.as_str(),
+        "non è" | "non sono" | "non ero" | "non era" | "non sarà"
+            | "non mi sono" | "non si è" | "non c è"
+    ) {
+        return true;
+    }
+
     matches!(
-        normalize_context_word(last).as_str(),
+        last.as_str(),
         "non"
             | "niente"
             | "senza"
@@ -298,6 +324,22 @@ fn previous_final_needs_context(previous: &str) -> bool {
 fn should_attach_previous_context(current: &str, previous: Option<&str>) -> bool {
     is_short_context_fragment(current)
         || previous.map(previous_final_needs_context).unwrap_or(false)
+}
+
+/// Keep only a tiny suffix of the previous final as hidden translation context.
+/// Passing the whole previous subtitle made small Hy-MT2 models repeat it even
+/// when the prompt explicitly said not to. Four words are enough for dangling
+/// Italian constructions such as "appena finito di" or "lunga, non è".
+fn previous_context_tail(previous: &str) -> Option<String> {
+    let words: Vec<&str> = previous
+        .split_whitespace()
+        .filter(|word| !word.trim().is_empty())
+        .collect();
+    if words.is_empty() {
+        return None;
+    }
+    let start = words.len().saturating_sub(4);
+    Some(words[start..].join(" "))
 }
 
 /// 新录音开始（sequence 重置）：清空待译队列与已见集合。
@@ -419,7 +461,9 @@ pub fn queue_translation<R: Runtime>(app: &AppHandle<R>, text: &str, sequence_id
     let context_before = if engine_kind == "hymt2"
         && should_attach_previous_context(&text, previous_final.as_deref())
     {
-        previous_final.clone()
+        previous_final
+            .as_deref()
+            .and_then(previous_context_tail)
     } else {
         None
     };
@@ -733,8 +777,22 @@ mod tests {
         assert!(previous_final_needs_context("per oggi non"));
         assert!(previous_final_needs_context("visto che"));
         assert!(previous_final_needs_context("adesso è il momento di"));
+        assert!(previous_final_needs_context("giornata molto lunga, non è"));
+        assert!(previous_final_needs_context("io non mi sono"));
         assert!(!previous_final_needs_context("oggi è stata una giornata lunga."));
         assert!(!previous_final_needs_context("posso rilassarmi un po'."));
+    }
+
+    #[test]
+    fn previous_context_is_limited_to_short_tail() {
+        assert_eq!(
+            previous_context_tail("Ciao come stai io ho appena finito di").as_deref(),
+            Some("ho appena finito di")
+        );
+        assert_eq!(
+            previous_context_tail("giornata molto lunga, non è").as_deref(),
+            Some("giornata molto lunga, non è")
+        );
     }
 
     #[test]
