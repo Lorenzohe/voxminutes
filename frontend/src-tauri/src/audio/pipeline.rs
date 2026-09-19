@@ -829,10 +829,11 @@ impl AudioPipeline {
         // (audio/retranscription.rs LOCAL_VAD_*): the most sensitive silero pair
         // that still does not stick in-speech on real recordings, so long
         // continuous speech (e.g. news broadcast with BGM) is segmented instead
-        // of producing one huge chunk. 800ms redemption still satisfies
-        // post_speech_pad (400ms) ≤ redemption_time, avoiding
-        // "Duration Xms is outside of session audio range" panics.
-        let vad_processor = match ContinuousVadProcessor::new_with_thresholds(sample_rate, 800, 0.35, 0.25) {
+        // of producing one huge chunk. Whisper benefits from a slightly longer
+        // end-of-speech hold so natural clause pauses do not become tiny finals.
+        // 1200ms still satisfies post_speech_pad (400ms) <= redemption_time and
+        // keeps final-only translation latency reasonable.
+        let vad_processor = match ContinuousVadProcessor::new_with_thresholds(sample_rate, 1200, 0.35, 0.25) {
             Ok(processor) => {
                 info!("VAD-driven pipeline: VAD segments will be sent directly to Whisper (no time-based accumulation)");
                 processor
