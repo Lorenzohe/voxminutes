@@ -356,10 +356,31 @@ const MODELS: &[DownloadableModel] = &[
         size_bytes: 2_489_758_112,
         required_files: &["google_gemma-3-4b-it-Q4_K_M.gguf"],
     },
-    // Hy-MT2 LLM translation model (GGUF, runs via the llama helper).
+    // Hy-MT2 realtime translation model (GGUF, runs via the llama helper).
+    DownloadableModel {
+        id: "hy-mt2-1.8b-q4_k_m",
+        display_name: "Hy-MT2-1.8B Q4_K_M（实时翻译）",
+        dir_name: "hy-mt2-1.8b",
+        sources: &[
+            ModelSource::Files {
+                base_url: "https://huggingface.co/tencent/Hy-MT2-1.8B-GGUF",
+                resolve_path: HF_RESOLVE,
+                files: &["Hy-MT2-1.8B-Q4_K_M.gguf"],
+            },
+            ModelSource::Files {
+                base_url: "https://hf-mirror.com/tencent/Hy-MT2-1.8B-GGUF",
+                resolve_path: HF_RESOLVE,
+                files: &["Hy-MT2-1.8B-Q4_K_M.gguf"],
+            },
+        ],
+        size_bytes: 1_133_080_448,
+        required_files: &["Hy-MT2-1.8B-Q4_K_M.gguf"],
+    },
+    // Hy-MT2 high-quality translation model. Kept installed separately for
+    // offline/re-transcription translation; realtime translation uses Q4_K_M.
     DownloadableModel {
         id: "hy-mt2-1.8b-q6_k",
-        display_name: "Hy-MT2-1.8B Q6_K（高质量翻译测试）",
+        display_name: "Hy-MT2-1.8B Q6_K（高质量 / Offline）",
         dir_name: "hy-mt2-1.8b-q6k",
         sources: &[
             ModelSource::Files {
@@ -373,7 +394,6 @@ const MODELS: &[DownloadableModel] = &[
                 files: &["Hy-MT2-1.8B-Q6_K.gguf"],
             },
         ],
-        // Approximate Q6_K size from the official Tencent HuggingFace repository (~1.47 GB).
         size_bytes: 1_470_000_000,
         required_files: &["Hy-MT2-1.8B-Q6_K.gguf"],
     },
@@ -416,11 +436,23 @@ pub(crate) fn m2m100_installed() -> bool {
     }
 }
 
-pub const HY_MT2_MODEL_ID: &str = "hy-mt2-1.8b-q6_k";
+pub const HY_MT2_MODEL_ID: &str = "hy-mt2-1.8b-q4_k_m";
+pub const HY_MT2_OFFLINE_MODEL_ID: &str = "hy-mt2-1.8b-q6_k";
 
-/// Whether the Hy-MT2 translation model is installed.
+/// Whether the realtime Hy-MT2 Q4_K_M translation model is installed.
 pub(crate) fn hy_mt2_installed() -> bool {
     match find_model(HY_MT2_MODEL_ID) {
+        Some(m) => is_installed(
+            &crate::sherpa_onnx_engine::commands::resolved_models_dir(),
+            m,
+        ),
+        None => false,
+    }
+}
+
+/// Whether the high-quality Hy-MT2 Q6_K offline model is installed.
+pub(crate) fn hy_mt2_offline_installed() -> bool {
+    match find_model(HY_MT2_OFFLINE_MODEL_ID) {
         Some(m) => is_installed(
             &crate::sherpa_onnx_engine::commands::resolved_models_dir(),
             m,
