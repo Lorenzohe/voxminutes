@@ -310,7 +310,7 @@ const MODELS: &[DownloadableModel] = &[
     // offline/re-transcription translation; realtime translation uses Q4_K_M.
     DownloadableModel {
         id: "hy-mt2-1.8b-q6_k",
-        display_name: "Hy-MT2-1.8B Q6_K（实时翻译 / 高质量）",
+        display_name: "HY-MT2-1.8B-Q6_K",
         dir_name: "hy-mt2-1.8b-q6k",
         sources: &[
             ModelSource::Files {
