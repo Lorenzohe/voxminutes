@@ -184,6 +184,18 @@ pub fn detect_source_lang(text: &str) -> &'static str {
     }
 }
 
+fn looks_like_italian(text: &str) -> bool {
+    let lower = text.to_lowercase();
+    let padded = format!(" {} ", lower.replace(|c: char| !c.is_alphabetic() && c != 'à' && c != 'è' && c != 'é' && c != 'ì' && c != 'ò' && c != 'ù', " "));
+    const MARKERS: &[&str] = &[
+        " ciao ", " sono ", " non ", " una ", " oggi ", " quindi ", " adesso ",
+        " molto ", " giornata ", " lavorare ", " rilassarmi ", " fatto ", " ancora ",
+        " questo ", " questa ", " momento ", " fuori ", " perché ", " però ", " così ",
+    ];
+    let score = MARKERS.iter().filter(|m| padded.contains(**m)).count();
+    score >= 3 || (score >= 2 && lower.contains('è'))
+}
+
 fn hymt2_source_lang(text: &str, asr_hint: Option<&str>) -> String {
     // Explicit script evidence wins over a fixed ASR hint. This matters in
     // mixed meetings: Whisper may be configured as Italian while a Chinese
@@ -193,12 +205,20 @@ fn hymt2_source_lang(text: &str, asr_hint: Option<&str>) -> String {
         return detected.to_string();
     }
 
-    match asr_hint {
-        Some(lang @ ("it" | "fr" | "de" | "es" | "pt" | "ru" | "ja" | "ko" | "zh" | "en")) => {
-            lang.to_string()
-        }
-        _ => detected.to_string(),
+    // A fixed ASR language remains authoritative for Latin-script languages.
+    if let Some(lang @ ("it" | "fr" | "de" | "es" | "pt" | "ru" | "en")) = asr_hint {
+        return lang.to_string();
     }
+
+    // Whisper Auto has no useful Latin-script hint. The generic detector falls
+    // back to English for Latin text, which was causing Italian speech to be
+    // logged and prompted as en->zh. Use a conservative Italian heuristic so
+    // Auto mode still sends clear Italian speech to Hy-MT2 as it->target.
+    if looks_like_italian(text) {
+        return "it".to_string();
+    }
+
+    detected.to_string()
 }
 
 // ── Realtime translation queue ────────────────────────────────────────────────
@@ -423,12 +443,41 @@ pub fn kick_translation_worker<R: Runtime>(app: &AppHandle<R>) {
     tauri::async_runtime::spawn(async move {
         loop {
             process_pending_translations(app.clone()).await;
-            // 释放标记前再查队列，避免与新入队任务竞态
+
             let empty = TRANSLATE_QUEUE.lock().map(|q| q.is_empty()).unwrap_or(true);
-            if empty {
-                FINAL_WORKER_RUNNING.store(false, Ordering::SeqCst);
+            if !empty {
+                continue;
+            }
+
+            // Release ownership before exiting, then re-check the queue.
+            //
+            // Lost-wakeup race fixed here:
+            // 1) worker observes queue empty while RUNNING=true
+            // 2) producer enqueues and kick_translation_worker sees true, so it returns
+            // 3) worker stores false and exits
+            // The queued task would then sit idle until some later event kicked the
+            // worker again. This matched the realtime logs exactly.
+            FINAL_WORKER_RUNNING.store(false, Ordering::SeqCst);
+
+            let has_work = TRANSLATE_QUEUE
+                .lock()
+                .map(|q| !q.is_empty())
+                .unwrap_or(false);
+            if !has_work {
                 return;
             }
+
+            // If no producer already claimed the worker after we released it,
+            // reclaim it ourselves and continue draining. If another producer
+            // did claim it, that producer has spawned a replacement worker.
+            if FINAL_WORKER_RUNNING
+                .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+                .is_ok()
+            {
+                log::debug!("Translation worker recovered work queued during shutdown race");
+                continue;
+            }
+            return;
         }
     });
 }
