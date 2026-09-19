@@ -15,8 +15,10 @@ use super::vad::{ContinuousVadProcessor, SpeechSegment};
 
 pub(crate) const WHISPER_PARTIAL_CHUNK_FLAG: u64 = 1u64 << 63;
 const WHISPER_PREVIEW_INTERVAL_SAMPLES: usize = 4 * 16000;
-const WHISPER_MAX_LIVE_SEGMENT_SAMPLES: usize = 26 * 16000;
+const WHISPER_MAX_LIVE_SEGMENT_SAMPLES: usize = 24 * 16000;
 const WHISPER_ROLLOVER_OVERLAP_SAMPLES: usize = 32_000; // 2.0s at 16kHz
+const DEFAULT_VAD_REDEMPTION_MS: u32 = 800;
+const WHISPER_VAD_REDEMPTION_MS: u32 = 2000;
 
 /// Ring buffer for synchronized audio mixing
 /// Accumulates samples from mic and system streams until we have aligned windows
@@ -825,15 +827,15 @@ impl AudioPipeline {
         // For now, we log it for monitoring and potential optimization
         let _ = (mic_device_name, mic_device_kind, system_device_name, system_device_kind);
 
-        // VAD thresholds/redemption time mirror the tuned offline SenseVoice values
-        // (audio/retranscription.rs LOCAL_VAD_*): the most sensitive silero pair
-        // that still does not stick in-speech on real recordings, so long
-        // continuous speech (e.g. news broadcast with BGM) is segmented instead
-        // of producing one huge chunk. Whisper benefits from a slightly longer
-        // end-of-speech hold so natural clause pauses do not become tiny finals.
-        // 1200ms still satisfies post_speech_pad (400ms) <= redemption_time and
-        // keeps final-only translation latency reasonable.
-        let vad_processor = match ContinuousVadProcessor::new_with_thresholds(sample_rate, 1200, 0.35, 0.25) {
+        // Start with the original realtime VAD behavior. Whisper live mode
+        // reconfigures this to a longer end-of-speech hold before the pipeline
+        // starts, while SenseVoice keeps the original 800ms behavior.
+        let vad_processor = match ContinuousVadProcessor::new_with_thresholds(
+            sample_rate,
+            DEFAULT_VAD_REDEMPTION_MS,
+            0.35,
+            0.25,
+        ) {
             Ok(processor) => {
                 info!("VAD-driven pipeline: VAD segments will be sent directly to Whisper (no time-based accumulation)");
                 processor
@@ -874,6 +876,26 @@ impl AudioPipeline {
             whisper_active_segment_id: None,
             whisper_last_preview_samples: 0,
         }
+    }
+
+    fn configure_whisper_live_preview(&mut self, enabled: bool) -> Result<()> {
+        self.whisper_live_preview = enabled;
+        let redemption_ms = if enabled {
+            WHISPER_VAD_REDEMPTION_MS
+        } else {
+            DEFAULT_VAD_REDEMPTION_MS
+        };
+        self.vad_processor = ContinuousVadProcessor::new_with_thresholds(
+            self.sample_rate,
+            redemption_ms,
+            0.35,
+            0.25,
+        )?;
+        info!(
+            "VAD mode configured: whisper_live_preview={}, redemption={}ms",
+            enabled, redemption_ms
+        );
+        Ok(())
     }
 
     fn reserve_whisper_segment_id(&mut self) -> u64 {
@@ -940,8 +962,8 @@ impl AudioPipeline {
         let current_len = self.vad_processor.current_speech_len_samples();
 
         // Safety boundary for truly continuous speech. Partial subtitles keep updating
-        // every 4s, so we can wait until 26s before a forced final. This stays
-        // below Whisper's 30s window while greatly reducing mid-sentence cuts.
+        // every 4s, while a natural final now waits for ~2s of silence. Force a
+        // final at 24s so we stay comfortably below Whisper's 30s window.
         // Keep 2s overlap so the next window retains linguistic context.
         if current_len >= WHISPER_MAX_LIVE_SEGMENT_SAMPLES {
             if let Some(segment) = self
@@ -1095,8 +1117,18 @@ impl AudioPipeline {
                                             "unknown panic".to_string()
                                         };
                                         error!("🛑 VAD PANIC CAUGHT: {} — resetting VAD processor to recover", panic_msg);
-                                        // Recreate with the same tuned parameters as AudioPipeline::new
-                                        self.vad_processor = match ContinuousVadProcessor::new_with_thresholds(self.sample_rate, 800, 0.35, 0.25) {
+                                        // Recreate with the active ASR-specific VAD policy.
+                                        let redemption_ms = if self.whisper_live_preview {
+                                            WHISPER_VAD_REDEMPTION_MS
+                                        } else {
+                                            DEFAULT_VAD_REDEMPTION_MS
+                                        };
+                                        self.vad_processor = match ContinuousVadProcessor::new_with_thresholds(
+                                            self.sample_rate,
+                                            redemption_ms,
+                                            0.35,
+                                            0.25,
+                                        ) {
                                             Ok(processor) => processor,
                                             Err(e) => {
                                                 error!("Failed to re-create VAD processor: {}", e);
@@ -1237,7 +1269,7 @@ impl AudioPipelineManager {
         // This ensures both mic AND system audio are captured in recordings
         pipeline.recording_sender_for_mixed = recording_sender;
         pipeline.bypass_vad = bypass_vad;
-        pipeline.whisper_live_preview = whisper_live_preview;
+        pipeline.configure_whisper_live_preview(whisper_live_preview)?;
 
         let handle = tokio::spawn(async move {
             pipeline.run().await
