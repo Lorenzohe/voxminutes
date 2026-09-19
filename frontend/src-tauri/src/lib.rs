@@ -665,12 +665,6 @@ pub fn run() {
                                 log::warn!("Hy-MT2 翻译引擎预热失败: {}", e);
                             }
                         }
-                    } else if preload_engine == "m2m100" {
-                        if model_download::m2m100_installed() {
-                            if let Err(e) = translation::get_m2m100_engine() {
-                                log::warn!("M2M100 翻译引擎预加载失败: {}", e);
-                            }
-                        }
                     } else {
                         for direction in ["zh-en", "en-zh"] {
                             if translation::is_model_installed(direction) {
