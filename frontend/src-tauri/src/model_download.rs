@@ -359,7 +359,7 @@ const MODELS: &[DownloadableModel] = &[
     // Hy-MT2 realtime translation model (GGUF, runs via the llama helper).
     DownloadableModel {
         id: "hy-mt2-1.8b-q4_k_m",
-        display_name: "Hy-MT2-1.8B Q4_K_M（实时翻译）",
+        display_name: "Hy-MT2-1.8B Q4_K_M（备用实时翻译）",
         dir_name: "hy-mt2-1.8b",
         sources: &[
             ModelSource::Files {
@@ -380,7 +380,7 @@ const MODELS: &[DownloadableModel] = &[
     // offline/re-transcription translation; realtime translation uses Q4_K_M.
     DownloadableModel {
         id: "hy-mt2-1.8b-q6_k",
-        display_name: "Hy-MT2-1.8B Q6_K（高质量 / Offline）",
+        display_name: "Hy-MT2-1.8B Q6_K（实时翻译 / 高质量）",
         dir_name: "hy-mt2-1.8b-q6k",
         sources: &[
             ModelSource::Files {
@@ -436,10 +436,10 @@ pub(crate) fn m2m100_installed() -> bool {
     }
 }
 
-pub const HY_MT2_MODEL_ID: &str = "hy-mt2-1.8b-q4_k_m";
-pub const HY_MT2_OFFLINE_MODEL_ID: &str = "hy-mt2-1.8b-q6_k";
+pub const HY_MT2_MODEL_ID: &str = "hy-mt2-1.8b-q6_k";
+pub const HY_MT2_FALLBACK_MODEL_ID: &str = "hy-mt2-1.8b-q4_k_m";
 
-/// Whether the realtime Hy-MT2 Q4_K_M translation model is installed.
+/// Whether the realtime Hy-MT2 Q6_K translation model is installed.
 pub(crate) fn hy_mt2_installed() -> bool {
     match find_model(HY_MT2_MODEL_ID) {
         Some(m) => is_installed(
@@ -450,9 +450,9 @@ pub(crate) fn hy_mt2_installed() -> bool {
     }
 }
 
-/// Whether the high-quality Hy-MT2 Q6_K offline model is installed.
+/// Whether the lighter Hy-MT2 Q4_K_M fallback model is installed.
 pub(crate) fn hy_mt2_offline_installed() -> bool {
-    match find_model(HY_MT2_OFFLINE_MODEL_ID) {
+    match find_model(HY_MT2_FALLBACK_MODEL_ID) {
         Some(m) => is_installed(
             &crate::sherpa_onnx_engine::commands::resolved_models_dir(),
             m,
