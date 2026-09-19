@@ -111,7 +111,8 @@ pub(crate) fn build_prompt(text: &str, source_lang: &str, target_lang: &str, asr
                  3. 完整保留原文每一项语义，不得省略、概括、合并或添加内容；\n\
                  4. 仅在明显是语音识别错误时做最小纠正，不得改变原意；\n\
                  5. 保留有意义的感叹、重复和语气表达，同时输出流畅自然的口语翻译；\n\
-                 6. 不要解释，不要备注。"
+                 6. 不要解释，不要备注；\n\
+                 7. 数字、时间、尺寸、单位、型号、零件号必须忠实保留，不得擅自改写数值或编号。"
             )
         } else {
             format!(
@@ -124,7 +125,8 @@ pub(crate) fn build_prompt(text: &str, source_lang: &str, target_lang: &str, asr
                  3. Preserve every semantic unit; do not omit, summarize, merge, or add content.\n\
                  4. Correct only obvious ASR errors with the smallest possible change; do not change the meaning.\n\
                  5. Preserve meaningful interjections, repetitions, and tone while producing fluent natural speech.\n\
-                 6. Do not explain or add notes."
+                 6. Do not explain or add notes.\n\
+                 7. Preserve numbers, times, dimensions, units, model names, and part numbers exactly; do not alter numeric values or identifiers."
             )
         };
         format!("{instruction}\n\nSource: {text}\n\nTarget ({tgt_en}):")
@@ -161,7 +163,8 @@ pub(crate) fn build_contextual_prompt(
              1. 只输出当前片段的{tgt_en}译文；\n\
              2. 根据上一段语境选择当前短语最合适的含义；\n\
              3. 不要添加当前片段没有表达的新信息；\n\
-             4. 不要解释，不要备注，不要输出原文。\n\n\
+             4. 数字、时间、尺寸、单位、型号、零件号必须忠实保留，不得改写；\n\
+             5. 不要解释，不要备注，不要输出原文。\n\n\
              上一段（仅供语境）：{context_before}\n\
              当前片段（只翻译这一段）：{current_text}\n\n\
              Target ({tgt_en}):"
@@ -173,7 +176,8 @@ pub(crate) fn build_contextual_prompt(
              1. Output ONLY the translation of the current fragment.\n\
              2. Use the previous segment only to disambiguate the current short phrase.\n\
              3. Do not add information not expressed by the current fragment.\n\
-             4. Do not explain, annotate, or output the source text.\n\n\
+             4. Preserve numbers, times, dimensions, units, model names, and part numbers exactly.\n\
+             5. Do not explain, annotate, or output the source text.\n\n\
              Previous segment (context only): {context_before}\n\
              Current fragment (translate only this): {current_text}\n\n\
              Target ({tgt_en}):"
@@ -526,6 +530,33 @@ mod tests {
         assert!(p.contains("6. 不要解释，不要备注。"));
         assert!(p.contains("Source: 今天天气不错"));
         assert!(p.contains("Target (English):"));
+    }
+
+    #[test]
+    fn asr_prompt_preserves_numeric_and_technical_values() {
+        let p = build_prompt(
+            "Sono le 18 e 40, quota 12.5 mm, codice AB-123.",
+            "it",
+            "zh",
+            true,
+        );
+        assert!(p.contains("数字、时间、尺寸、单位、型号、零件号必须忠实保留"));
+        assert!(p.contains("18 e 40"));
+        assert!(p.contains("12.5 mm"));
+        assert!(p.contains("AB-123"));
+    }
+
+    #[test]
+    fn contextual_prompt_marks_previous_segment_as_context_only() {
+        let p = build_contextual_prompt(
+            "voglio più lavorare",
+            "per oggi non",
+            "it",
+            "zh",
+        );
+        assert!(p.contains("上一段（仅供语境）：per oggi non"));
+        assert!(p.contains("当前片段（只翻译这一段）：voglio più lavorare"));
+        assert!(p.contains("严禁翻译或复述上一段"));
     }
 
     #[test]
