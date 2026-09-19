@@ -643,11 +643,17 @@ pub fn run() {
                     translation::TRANSLATION_ENABLED
                         .store(enabled, std::sync::atomic::Ordering::SeqCst);
                 }
-                if let Some(engine) =
-                    saved_engine.filter(|e| matches!(e.as_str(), "opus" | "hymt2"))
-                {
-                    if let Ok(mut guard) = translation::TRANSLATION_ENGINE.lock() {
-                        *guard = engine;
+                if let Some(engine) = saved_engine {
+                    let migrated_engine = match engine.as_str() {
+                        // Legacy generic Hy-MT2 was the finalized Q6 route.
+                        "hymt2" => Some("hymt2-q6".to_string()),
+                        "opus" | "hymt2-q4" | "hymt2-q6" => Some(engine),
+                        _ => None,
+                    };
+                    if let Some(engine) = migrated_engine {
+                        if let Ok(mut guard) = translation::TRANSLATION_ENGINE.lock() {
+                            *guard = engine;
+                        }
                     }
                 }
                 // home 语言：非法值忽略，保持默认 "zh"
@@ -673,19 +679,16 @@ pub fn run() {
                 }
             }
 
-            // 后台预加载翻译引擎，消除首次翻译的冷启动等待。
-            // 评估结论：Hy-MT2（1.1GB Q4_K_M）经 mmap 加载为秒级，后台预加载不阻塞 UI；
-            // 代价是 llama-helper sidecar 常驻约 1.5GB 内存，且与会议总结共享 sidecar、
-            // 跨用途切换时会触发模型换载（可接受）。模型未安装时静默跳过
-            // （设置页下载后首次使用时再加载）。
+            // 后台预加载当前翻译引擎，消除首次翻译的冷启动等待。
+            // Hy-MT2 Q4/Q6 使用同一 llama-helper；切换时 helper 按模型路径换载。
             let preload_engine = translation::current_engine();
             tauri::async_runtime::spawn(async move {
                 let start = std::time::Instant::now();
                 let _ = tokio::task::spawn_blocking(move || {
-                    if preload_engine == "hymt2" {
-                        if model_download::hy_mt2_installed() {
-                            if let Err(e) = translation::llm::warmup() {
-                                log::warn!("Hy-MT2 翻译引擎预热失败: {}", e);
+                    if translation::is_hymt2_engine(&preload_engine) {
+                        if model_download::hy_mt2_installed_for_engine(&preload_engine) {
+                            if let Err(e) = translation::llm::warmup_for_engine(&preload_engine) {
+                                log::warn!("{} 翻译引擎预热失败: {}", preload_engine, e);
                             }
                         }
                     } else {
