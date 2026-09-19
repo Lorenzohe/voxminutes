@@ -30,12 +30,20 @@ impl SherpaOnnxProvider {
 
     async fn transcribe_chunk(&self, samples: &[f32]) -> Result<String, TranscriptionError> {
         let rec = self.engine.recognizer.lock().await;
-        let stream = rec.create_stream();
-        stream.accept_waveform(SAMPLE_RATE as i32, samples);
-        rec.decode(&stream);
-        let result = stream
-            .get_result()
-            .ok_or_else(|| TranscriptionError::EngineFailed("No result".into()))?;
+
+        // sherpa-onnx OfflineRecognizer::decode is synchronous and CPU-heavy.
+        // Running it directly inside this async function can monopolize a Tokio
+        // worker thread for several seconds, starving the realtime translation
+        // worker even though Hy-MT2 itself is running on the GPU. block_in_place
+        // tells the multi-thread runtime to hand other async work to replacement
+        // workers while the current thread performs the native decode.
+        let result = tokio::task::block_in_place(|| {
+            let stream = rec.create_stream();
+            stream.accept_waveform(SAMPLE_RATE as i32, samples);
+            rec.decode(&stream);
+            stream.get_result()
+        })
+        .ok_or_else(|| TranscriptionError::EngineFailed("No result".into()))?;
 
         let text = result.text.trim().to_string();
         if self.engine.get_model_type() == crate::sherpa_onnx_engine::AsrModelType::Whisper {
