@@ -4,21 +4,6 @@ import type { TranslationEngine } from '@/types'
 
 /** 各翻译引擎支持的目标语言代码（不再有 auto；源语言==目标语言时后端跳过/返回原文） */
 export const OPUS_TARGET_LANGS = ['zh', 'en'] as const
-export const M2M100_TARGET_LANGS = [
-  'zh',
-  'en',
-  'ja',
-  'ko',
-  'fr',
-  'de',
-  'es',
-  'ru',
-  'pt',
-  'it',
-  'th',
-  'vi',
-] as const
-
 export const HYMT2_TARGET_LANGS = [
   'zh',
   'en',
@@ -39,7 +24,6 @@ export const HYMT2_TARGET_LANGS = [
 /** 按引擎返回可选目标语言代码列表（全量，不排除 home） */
 export function getTranslateTargetLangs(engine: TranslationEngine): string[] {
   if (engine === 'hymt2') return [...HYMT2_TARGET_LANGS]
-  if (engine === 'm2m100') return [...M2M100_TARGET_LANGS]
   return [...OPUS_TARGET_LANGS]
 }
 
