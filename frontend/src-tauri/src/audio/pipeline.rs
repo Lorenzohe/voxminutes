@@ -15,10 +15,10 @@ use super::vad::{ContinuousVadProcessor, SpeechSegment};
 
 pub(crate) const WHISPER_PARTIAL_CHUNK_FLAG: u64 = 1u64 << 63;
 const WHISPER_PREVIEW_INTERVAL_SAMPLES: usize = 4 * 16000;
-const WHISPER_MAX_LIVE_SEGMENT_SAMPLES: usize = 24 * 16000;
-const WHISPER_ROLLOVER_OVERLAP_SAMPLES: usize = 32_000; // 2.0s at 16kHz
+const WHISPER_MAX_LIVE_SEGMENT_SAMPLES: usize = 12 * 16000;
+const WHISPER_ROLLOVER_OVERLAP_SAMPLES: usize = 16_000; // 1.0s at 16kHz
 const DEFAULT_VAD_REDEMPTION_MS: u32 = 800;
-const WHISPER_VAD_REDEMPTION_MS: u32 = 2000;
+const WHISPER_VAD_REDEMPTION_MS: u32 = 1200;
 
 /// Ring buffer for synchronized audio mixing
 /// Accumulates samples from mic and system streams until we have aligned windows
