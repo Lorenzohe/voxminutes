@@ -363,21 +363,39 @@ impl ModelState {
 
         eprintln!("📝 Tokenized prompt: {} tokens", tokens_list.len());
 
-        // Longest common prefix with the previous prompt. KV positions
-        // [0, hit) of seq 0 are still valid and can be skipped.
-        let mut common = 0usize;
-        while common < tokens_list.len()
-            && common < self.prev_prompt_tokens.len()
-            && tokens_list[common] == self.prev_prompt_tokens[common]
-        {
-            common += 1;
-        }
-        // Require a meaningful hit, and always re-decode at least the final
-        // prompt token so its logits are available for the first sample.
-        let prefix_hit = if common >= 16 && !self.prev_prompt_tokens.is_empty() {
-            common.min(tokens_list.len() - 1)
-        } else {
+        // Hy-MT2 realtime translation favors stability over prompt-prefix
+        // reuse. Consecutive translation requests share a long instruction
+        // prefix, but retaining/trimming the previous CUDA KV state can leave
+        // the next generation wedged on some Windows/NVIDIA combinations.
+        // Other llama-helper workloads (for example meeting summaries) may
+        // still reuse their stable prompt prefix.
+        let is_hymt2 = self
+            .model_path
+            .as_ref()
+            .and_then(|p| p.file_name())
+            .and_then(|s| s.to_str())
+            .map(|s| s.to_ascii_lowercase().contains("hy-mt2"))
+            .unwrap_or(false);
+
+        let prefix_hit = if is_hymt2 {
             0
+        } else {
+            // Longest common prefix with the previous prompt. KV positions
+            // [0, hit) of seq 0 are still valid and can be skipped.
+            let mut common = 0usize;
+            while common < tokens_list.len()
+                && common < self.prev_prompt_tokens.len()
+                && tokens_list[common] == self.prev_prompt_tokens[common]
+            {
+                common += 1;
+            }
+            // Require a meaningful hit, and always re-decode at least the final
+            // prompt token so its logits are available for the first sample.
+            if common >= 16 && !self.prev_prompt_tokens.is_empty() {
+                common.min(tokens_list.len() - 1)
+            } else {
+                0
+            }
         };
 
         let ctx = self.ctx.as_mut().expect("context ensured above");
@@ -391,9 +409,11 @@ impl ModelState {
                 tokens_list.len()
             );
         } else {
-            // Divergent prompt: start from a clean KV cache.
+            // Hy-MT2 and divergent prompts start from a clean KV cache.
             ctx.clear_kv_cache();
-            if !self.prev_prompt_tokens.is_empty() {
+            if is_hymt2 {
+                eprintln!("♻️ Prefix reuse disabled for Hy-MT2 realtime stability");
+            } else if !self.prev_prompt_tokens.is_empty() {
                 eprintln!(
                     "♻️ Prefix reuse: 0/{} tokens cached (prefix mismatch)",
                     tokens_list.len()
