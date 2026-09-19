@@ -113,7 +113,7 @@ pub(crate) fn build_prompt(text: &str, source_lang: &str, target_lang: &str, asr
                  5. 保留有意义的感叹、重复和语气表达，同时输出流畅自然的口语翻译；\n\
                  6. 不要解释，不要备注；\n\
                  7. 数字、时间、尺寸、单位、型号、零件号必须忠实保留，不得擅自改写数值或编号；\n\
-                 8. 严禁输出“来源：”“Source:”或“原文：”等标签；时间可按目标语言自然表达，但数字值必须保持不变（例如 18 e 40 应表达为 18点40分，而不是改变数字）。"
+                 8. 严禁输出“来源：”“Source:”或“原文：”等标签；普通可翻译的源语言词必须翻译，不得残留在译文中，只有专有名词、型号、零件号等标识可保留原文；时间可按目标语言自然表达，但数字值必须保持不变（例如 18 e 40 应表达为 18点40分，而不是改变数字）。"
             )
         } else {
             format!(
@@ -128,7 +128,7 @@ pub(crate) fn build_prompt(text: &str, source_lang: &str, target_lang: &str, asr
                  5. Preserve meaningful interjections, repetitions, and tone while producing fluent natural speech.\n\
                  6. Do not explain or add notes.\n\
                  7. Preserve numbers, times, dimensions, units, model names, and part numbers exactly; do not alter numeric values or identifiers.\n\
-                 8. Never output labels such as "Source:", "Original:", or their translated equivalents. Render time naturally in the target language while preserving every numeric value exactly."
+                 8. Never output labels such as "Source:", "Original:", or their translated equivalents. Translate ordinary source-language words instead of leaving them in the target text; preserve source text only for proper names, model names, part numbers, and other identifiers. Render time naturally in the target language while preserving every numeric value exactly."
             )
         };
         format!("{instruction}\n\nSource: {text}\n\nTarget ({tgt_en}):")
