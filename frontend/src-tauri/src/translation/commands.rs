@@ -7,7 +7,7 @@ use std::sync::atomic::Ordering;
 use crate::database::repositories::setting::SettingsRepository;
 use crate::state::AppState;
 
-use super::{current_engine, get_engine, is_model_installed, llm, HOME_LANG, TARGET_LANG, TRANSLATION_ENABLED, TRANSLATION_ENGINE};
+use super::{current_engine, get_engine, is_hymt2_engine, is_model_installed, llm, HOME_LANG, TARGET_LANG, TRANSLATION_ENABLED, TRANSLATION_ENGINE};
 
 /// Translate a block of text. direction: "auto" | "zh-en" | "en-zh"（hymt2 引擎
 /// 额外支持任意 "{src}-{tgt}" 语言对，如 "en-ja"、"zh-Hant-en"）。
@@ -30,10 +30,14 @@ pub async fn translate_text(
         return Ok(String::new());
     }
 
-    if current_engine() == "hymt2" {
-        // Hy-MT2 LLM 引擎：校验模型已安装，走 llama-helper sidecar
-        if !crate::model_download::hy_mt2_installed() {
-            return Err("Hy-MT2 翻译模型未安装，请先到设置页下载。".to_string());
+    let selected_engine = current_engine();
+    if is_hymt2_engine(&selected_engine) {
+        // Hy-MT2 Q4/Q6 共用同一套最终版翻译逻辑，只切换模型文件。
+        if !crate::model_download::hy_mt2_installed_for_engine(&selected_engine) {
+            return Err(format!(
+                "{} 翻译模型未安装，请先到设置页下载。",
+                if selected_engine == "hymt2-q4" { "HY-MT2-Q4" } else { "HY-MT2-Q6" }
+            ));
         }
         let explicit = llm::parse_direction(&direction);
         // 源语言：显式方向优先，否则按文本特征检测
@@ -68,14 +72,14 @@ pub async fn translate_text(
             if let Some(request_id) = request_id {
                 // 流式：增量文本以 translate-text-stream 事件推给前端
                 let app = app.clone();
-                llm::translate(&text, &resolved, false, Some(&mut |delta: &str| {
+                llm::translate_for_engine(&text, &resolved, false, &selected_engine, Some(&mut |delta: &str| {
                     let _ = app.emit(
                         "translate-text-stream",
                         serde_json::json!({ "request_id": request_id, "delta": delta }),
                     );
                 }))
             } else {
-                llm::translate(&text, &resolved, false, None)
+                llm::translate_for_engine(&text, &resolved, false, &selected_engine, None)
             }
         })
         .await
@@ -113,29 +117,32 @@ pub async fn set_translation_engine(
     state: tauri::State<'_, AppState>,
     engine: String,
 ) -> Result<(), String> {
-    if !matches!(engine.as_str(), "opus" | "hymt2") {
-        return Err(format!("不支持的翻译引擎: {}", engine));
-    }
+    // Backward compatibility: the old generic "hymt2" setting was the final
+    // Q6 route, so migrate it to the explicit Q6 id.
+    let engine = match engine.as_str() {
+        "hymt2" => "hymt2-q6".to_string(),
+        "opus" | "hymt2-q4" | "hymt2-q6" => engine,
+        _ => return Err(format!("不支持的翻译引擎: {}", engine)),
+    };
+
     log::info!("Translation engine: {}", engine);
     {
         let mut guard = TRANSLATION_ENGINE.lock().map_err(|e| e.to_string())?;
         *guard = engine.clone();
     }
-    // 持久化到设置表，下次启动时读回
     SettingsRepository::set(state.db_manager.pool(), "translation.engine", &engine)
         .await
         .map_err(|e| format!("保存翻译引擎设置失败: {}", e))?;
 
-    // 切换成功：后台预热目标引擎（模型未安装则跳过），失败仅告警不影响命令结果。
-    // 切到 hymt2 时卸载 OPUS-MT 引擎释放内存；切回 opus 时不杀 llama sidecar
-    // （与会议总结共享，交给其 idle 超时回收）。
+    // Q4/Q6 share the same final translation pipeline. Switching between them
+    // only changes the GGUF path; llama-helper reloads the selected model.
     tauri::async_runtime::spawn(async move {
         let _ = tokio::task::spawn_blocking(move || {
-            if engine == "hymt2" {
+            if is_hymt2_engine(&engine) {
                 super::unload_opus_engines();
-                if crate::model_download::hy_mt2_installed() {
-                    if let Err(e) = llm::warmup() {
-                        log::warn!("Hy-MT2 翻译引擎预热失败: {}", e);
+                if crate::model_download::hy_mt2_installed_for_engine(&engine) {
+                    if let Err(e) = llm::warmup_for_engine(&engine) {
+                        log::warn!("{} 翻译引擎预热失败: {}", engine, e);
                     }
                 }
             } else {
