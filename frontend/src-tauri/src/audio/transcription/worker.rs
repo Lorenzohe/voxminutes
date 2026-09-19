@@ -224,6 +224,20 @@ pub fn start_transcription_task<R: Runtime>(
                                                     best_partial
                                                 );
                                                 transcript = best_partial;
+                                            } else if let Some(repaired) =
+                                                repair_semantic_guard_regression(
+                                                    &best_partial,
+                                                    &transcript,
+                                                )
+                                            {
+                                                warn!(
+                                                    "Whisper semantic regression repaired for seq={}: final='{}' best_partial='{}' repaired='{}'",
+                                                    sequence_id,
+                                                    transcript,
+                                                    best_partial,
+                                                    repaired
+                                                );
+                                                transcript = repaired;
                                             }
                                         }
                                     }
@@ -494,6 +508,119 @@ fn transcript_information_score(text: &str) -> usize {
     words * 8 + chars
 }
 
+fn normalize_whisper_word(word: &str) -> String {
+    word.chars()
+        .filter(|c| c.is_alphanumeric() || *c == '\'' || *c == '’')
+        .flat_map(|c| c.to_lowercase())
+        .collect()
+}
+
+fn is_semantic_guard_word(word: &str) -> bool {
+    matches!(
+        word,
+        "non"
+            | "niente"
+            | "mai"
+            | "senza"
+            | "nessuno"
+            | "nessuna"
+            | "neanche"
+            | "nemmeno"
+    )
+}
+
+/// Whisper partials occasionally retain a short Italian negation that the final
+/// decode drops. A one-word loss such as "non mi sono..." -> "mi sono..." can
+/// reverse the meaning while looking like a normal-length final.
+///
+/// Repair only a very conservative case:
+/// - the missing token is an Italian semantic guard word;
+/// - at least two following words from the partial occur consecutively in final;
+/// - most of the partial still appears in final in order.
+///
+/// This keeps final's newer tail instead of replacing the whole final with an
+/// older partial snapshot.
+fn repair_semantic_guard_regression(partial: &str, final_text: &str) -> Option<String> {
+    let partial_tokens: Vec<&str> = partial.split_whitespace().collect();
+    let final_tokens: Vec<&str> = final_text.split_whitespace().collect();
+    if partial_tokens.len() < 4 || final_tokens.len() < 3 {
+        return None;
+    }
+
+    let partial_norm: Vec<String> = partial_tokens
+        .iter()
+        .map(|w| normalize_whisper_word(w))
+        .collect();
+    let final_norm: Vec<String> = final_tokens
+        .iter()
+        .map(|w| normalize_whisper_word(w))
+        .collect();
+
+    // Ordered coverage of the partial by the final. One missing short token is
+    // fine; a substantially different decode is not eligible for repair.
+    let mut matched = 0usize;
+    let mut cursor = 0usize;
+    for token in &partial_norm {
+        if token.is_empty() {
+            continue;
+        }
+        if let Some(offset) = final_norm[cursor..].iter().position(|w| w == token) {
+            matched += 1;
+            cursor += offset + 1;
+            if cursor >= final_norm.len() {
+                break;
+            }
+        }
+    }
+    if matched * 100 < partial_norm.len() * 70 {
+        return None;
+    }
+
+    for (idx, guard) in partial_norm.iter().enumerate() {
+        if !is_semantic_guard_word(guard) {
+            continue;
+        }
+
+        let partial_count = partial_norm.iter().filter(|w| *w == guard).count();
+        let final_count = final_norm.iter().filter(|w| *w == guard).count();
+        if final_count >= partial_count {
+            continue;
+        }
+
+        // Need two stable words after the guard so insertion point is
+        // unambiguous. This deliberately avoids repairing a guard at the very
+        // end of a partial snapshot.
+        let Some(next1) = partial_norm.get(idx + 1) else { continue };
+        let Some(next2) = partial_norm.get(idx + 2) else { continue };
+        if next1.is_empty() || next2.is_empty() {
+            continue;
+        }
+
+        let insert_at = final_norm
+            .windows(2)
+            .position(|pair| pair[0] == *next1 && pair[1] == *next2);
+        let Some(insert_at) = insert_at else { continue };
+
+        // If the partial has meaningful left context, require the nearest
+        // non-empty previous word to agree too. At segment start, the two-word
+        // right anchor is sufficient.
+        if idx > 0 {
+            let prev = &partial_norm[idx - 1];
+            if !prev.is_empty()
+                && (insert_at == 0 || final_norm[insert_at - 1] != *prev)
+            {
+                continue;
+            }
+        }
+
+        let mut repaired = final_tokens.clone();
+        repaired.insert(insert_at, partial_tokens[idx]);
+        return Some(repaired.join(" "));
+    }
+
+    None
+}
+
 /// A final Whisper decode can occasionally regress to only the last few words of
 /// a segment even though an earlier sliding-window partial contained the full
 /// utterance. Keep the partial only when the regression is obvious; otherwise
@@ -627,7 +754,10 @@ async fn transcribe_chunk_with_provider<R: Runtime>(
 
 #[cfg(test)]
 mod live_whisper_tests {
-    use super::{should_keep_partial_over_final, strip_whisper_cross_segment_overlap};
+    use super::{
+        repair_semantic_guard_regression, should_keep_partial_over_final,
+        strip_whisper_cross_segment_overlap,
+    };
 
     #[test]
     fn blocks_obvious_final_regression() {
@@ -639,6 +769,39 @@ mod live_whisper_tests {
             "E viene usato per salutare una persona o piu persone.",
             "una persona"
         ));
+    }
+
+    #[test]
+    fn repairs_missing_italian_non_without_losing_final_tail() {
+        let repaired = repair_semantic_guard_regression(
+            "non mi sono rilassata oggi quindi adesso",
+            "mi sono rilassata oggi quindi adesso è arrivato il momento",
+        );
+        assert_eq!(
+            repaired.as_deref(),
+            Some("non mi sono rilassata oggi quindi adesso è arrivato il momento")
+        );
+    }
+
+    #[test]
+    fn repairs_missing_italian_non_with_left_context() {
+        let repaired = repair_semantic_guard_regression(
+            "No, non mi sono rilassata oggi",
+            "No, mi sono rilassata oggi e quindi",
+        );
+        assert_eq!(
+            repaired.as_deref(),
+            Some("No, non mi sono rilassata oggi e quindi")
+        );
+    }
+
+    #[test]
+    fn does_not_inject_negation_into_different_final() {
+        let repaired = repair_semantic_guard_regression(
+            "non mi sono rilassata oggi",
+            "oggi è stata una giornata molto lunga",
+        );
+        assert!(repaired.is_none());
     }
 
     #[test]
