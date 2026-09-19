@@ -159,9 +159,23 @@ pub fn get_translation_engine() -> String {
 }
 
 #[tauri::command]
-pub fn set_translation_enabled(app: tauri::AppHandle, enabled: bool) {
+pub async fn set_translation_enabled(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    enabled: bool,
+) -> Result<(), String> {
     log::info!("Translation enabled: {}", enabled);
     TRANSLATION_ENABLED.store(enabled, Ordering::SeqCst);
+
+    // 持久化实时翻译开关，避免应用重启后静默恢复为关闭。
+    SettingsRepository::set(
+        state.db_manager.pool(),
+        "translation.enabled",
+        if enabled { "true" } else { "false" },
+    )
+    .await
+    .map_err(|e| format!("保存实时翻译开关失败: {}", e))?;
+
     if enabled {
         // 补译：开启翻译时，把当前录音中已提交但未入队过的段落补进翻译队列
         // （关闭期间提交的段落此前被 queue_translation 直接丢弃）。
@@ -176,6 +190,8 @@ pub fn set_translation_enabled(app: tauri::AppHandle, enabled: bool) {
             log::info!("开启翻译：补译 {} 条已提交段落", requeued);
         }
     }
+
+    Ok(())
 }
 
 #[tauri::command]
