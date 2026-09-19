@@ -36,7 +36,7 @@ export type ModelGroup = 'asr' | 'translate' | 'summary'
 
 export function modelGroup(id: string): ModelGroup {
   if (id === 'sense-voice' || id === 'x-asr-480ms' || id.startsWith('whisper-')) return 'asr'
-  if (id.startsWith('opus-mt-') || id.startsWith('hy-mt2-') || id.startsWith('m2m100-')) return 'translate'
+  if (id.startsWith('opus-mt-') || id.startsWith('hy-mt2-')) return 'translate'
   return 'summary'
 }
 
@@ -47,8 +47,6 @@ export function modelDesc(id: string, t: Messages): string | null {
       return t.setModelDescSenseVoice
     case 'x-asr-480ms':
       return t.setModelDescXAsr
-    case 'whisper-tiny':
-      return 'Whisper Tiny · 快速 / 低资源'
     case 'whisper-small':
       return '默认 / 均衡 · INT8 · CPU 稳定 · 意大利语会议推荐'
     case 'whisper-medium':
@@ -56,8 +54,6 @@ export function modelDesc(id: string, t: Messages): string | null {
     case 'opus-mt-zh-en':
     case 'opus-mt-en-zh':
       return t.setModelDescOpusMt
-    case 'm2m100-418m-int8':
-      return '实时多语言翻译 · Italian ↔ 中文 · ONNX INT8'
     case 'hy-mt2-1.8b-q4_k_m':
       return t.setModelDescHymt2
     case 'qwen2.5-3b-instruct-q4_k_m':
@@ -82,8 +78,6 @@ export function modelDisplayName(id: string, t: Messages, fallback?: string): st
       return t.setModelNameSenseVoice
     case 'x-asr-480ms':
       return t.setModelNameXAsr
-    case 'whisper-tiny':
-      return 'Whisper Tiny Multilingual'
     case 'whisper-small':
       return 'Whisper Small INT8'
     case 'whisper-medium':
@@ -92,8 +86,6 @@ export function modelDisplayName(id: string, t: Messages, fallback?: string): st
       return t.setModelNameOpusZhEn
     case 'opus-mt-en-zh':
       return t.setModelNameOpusEnZh
-    case 'm2m100-418m-int8':
-      return 'M2M100 418M INT8（实时翻译）'
     case 'hy-mt2-1.8b-q4_k_m':
       return t.setModelNameHymt2
     case 'qwen2.5-3b-instruct-q4_k_m':
