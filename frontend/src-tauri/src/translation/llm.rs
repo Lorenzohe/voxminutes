@@ -112,7 +112,8 @@ pub(crate) fn build_prompt(text: &str, source_lang: &str, target_lang: &str, asr
                  4. 仅在明显是语音识别错误时做最小纠正，不得改变原意；\n\
                  5. 保留有意义的感叹、重复和语气表达，同时输出流畅自然的口语翻译；\n\
                  6. 不要解释，不要备注；\n\
-                 7. 数字、时间、尺寸、单位、型号、零件号必须忠实保留，不得擅自改写数值或编号。"
+                 7. 数字、时间、尺寸、单位、型号、零件号必须忠实保留，不得擅自改写数值或编号；\n\
+                 8. 严禁输出“来源：”“Source:”或“原文：”等标签；时间可按目标语言自然表达，但数字值必须保持不变（例如 18 e 40 应表达为 18点40分，而不是改变数字）。"
             )
         } else {
             format!(
@@ -126,7 +127,8 @@ pub(crate) fn build_prompt(text: &str, source_lang: &str, target_lang: &str, asr
                  4. Correct only obvious ASR errors with the smallest possible change; do not change the meaning.\n\
                  5. Preserve meaningful interjections, repetitions, and tone while producing fluent natural speech.\n\
                  6. Do not explain or add notes.\n\
-                 7. Preserve numbers, times, dimensions, units, model names, and part numbers exactly; do not alter numeric values or identifiers."
+                 7. Preserve numbers, times, dimensions, units, model names, and part numbers exactly; do not alter numeric values or identifiers.\n\
+                 8. Never output labels such as "Source:", "Original:", or their translated equivalents. Render time naturally in the target language while preserving every numeric value exactly."
             )
         };
         format!("{instruction}\n\nSource: {text}\n\nTarget ({tgt_en}):")
@@ -192,7 +194,9 @@ pub(crate) fn build_contextual_prompt(
 const ECHO_PREFIXES: &[&str] = &[
     "Translation:", "translation:", "Translated:", "translated:",
     "Translate:", "translate:", "English:", "Chinese:",
+    "Source:", "source:", "Source：", "source：",
     "译文：", "翻译：", "英文：", "中文：",
+    "来源：", "来源:", "原文：", "原文:",
 ];
 
 /// 剔除 `<｜hy_...｜>` / `<|hy_...|>` / `<│hy_...│>` 形式的特殊 token。
@@ -660,6 +664,18 @@ mod tests {
             "zh",
         );
         assert_eq!(out, "你好");
+    }
+
+    #[test]
+    fn postprocess_strips_source_labels() {
+        assert_eq!(
+            postprocess("来源：这是译文", "it", "zh"),
+            "这是译文"
+        );
+        assert_eq!(
+            postprocess("Source: 这是译文", "it", "zh"),
+            "这是译文"
+        );
     }
 
     #[test]
