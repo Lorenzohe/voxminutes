@@ -99,7 +99,7 @@ impl ContinuousVadProcessor {
             buffer: Vec::with_capacity(vad_chunk_size * 2),
             speech_segments: VecDeque::new(),
             current_speech: Vec::new(),
-            pre_speech_history: VecDeque::with_capacity(16_000),
+            pre_speech_history: VecDeque::with_capacity(32_000),
             in_speech: false,
             processed_samples: 0,
             speech_start_sample: 0,
@@ -338,7 +338,7 @@ impl ContinuousVadProcessor {
                     }
                     self.in_speech = true;
 
-                    // Seed the live Whisper window with up to one second of
+                    // Seed the live Whisper window with up to two seconds of
                     // audio from immediately before the VAD transition. Silero
                     // already supplies pre-speech padding for naturally ended
                     // segments, but partial snapshots and the 15s rollover path
@@ -416,7 +416,7 @@ impl ContinuousVadProcessor {
         if self.in_speech {
             self.current_speech.extend_from_slice(chunk);
         } else {
-            const PRE_SPEECH_HISTORY_SAMPLES: usize = 16_000; // 1.0s at 16 kHz
+            const PRE_SPEECH_HISTORY_SAMPLES: usize = 32_000; // 2.0s at 16 kHz
             self.pre_speech_history.extend(chunk.iter().copied());
             while self.pre_speech_history.len() > PRE_SPEECH_HISTORY_SAMPLES {
                 self.pre_speech_history.pop_front();
