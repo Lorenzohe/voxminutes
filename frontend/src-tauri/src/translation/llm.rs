@@ -98,6 +98,7 @@ pub(crate) fn parse_direction(direction: &str) -> Option<(&str, &str)> {
 /// （完整 6 条要求，移植自参考实现的 build_asr_translate_prompt）。
 /// src 或 tgt 属于中文系（zh/zh-Hant/yue）时用中文指令，否则用英文指令。
 pub(crate) fn build_prompt(text: &str, source_lang: &str, target_lang: &str, asr_mode: bool) -> String {
+    let italian_zh_hint = source_lang == "it" && is_chinese_family(target_lang);
     let user_text = if asr_mode {
         let (_, src_en) = lang_names(source_lang);
         let (_, tgt_en) = lang_names(target_lang);
@@ -113,7 +114,12 @@ pub(crate) fn build_prompt(text: &str, source_lang: &str, target_lang: &str, asr
                  5. 保留有意义的感叹、重复和语气表达，同时输出流畅自然的口语翻译；\n\
                  6. 不要解释，不要备注；\n\
                  7. 数字、时间、尺寸、单位、型号、零件号必须忠实保留，不得擅自改写数值或编号；\n\
-                 8. 严禁输出“来源：”“Source:”或“原文：”等标签；普通可翻译的源语言词必须翻译，不得残留在译文中，只有专有名词、型号、零件号等标识可保留原文；时间可按目标语言自然表达，但数字值必须保持不变（例如 18 e 40 应表达为 18点40分，而不是改变数字）。"
+                 8. 严禁输出“来源：”“Source:”或“原文：”等标签；普通可翻译的源语言词必须翻译，不得残留在译文中，只有专有名词、型号、零件号等标识可保留原文；时间可按目标语言自然表达，但数字值必须保持不变（例如 18 e 40 应表达为 18点40分，而不是改变数字）。{}",
+                if italian_zh_hint {
+                    "\n9. 意大利语实时口语翻译要忠实、少改写：如果片段以残句开始或结束，不要猜测缺失的主语、动作或结论，只翻译当前实际出现的内容；quasi quasi 表示“有点想/要不/也许”的试探语气，不要译成“差不多”或“差点”；天气/光照语境中的 sole 表示“太阳/阳光”。"
+                } else {
+                    ""
+                }
             )
         } else {
             format!(
@@ -166,10 +172,15 @@ pub(crate) fn build_contextual_prompt(
              2. 根据上一段语境选择当前短语最合适的含义；\n\
              3. 不要添加当前片段没有表达的新信息；\n\
              4. 数字、时间、尺寸、单位、型号、零件号必须忠实保留，不得改写；\n\
-             5. 不要解释，不要备注，不要输出原文。\n\n\
+             5. 不要解释，不要备注，不要输出原文。{}\n\n\
              上一段（仅供语境）：{context_before}\n\
              当前片段（只翻译这一段）：{current_text}\n\n\
-             Target ({tgt_en}):"
+             Target ({tgt_en}):",
+            if source_lang == "it" && is_chinese_family(target_lang) {
+                "\n6. 意大利语残句不要脑补；quasi quasi 按“有点想/要不/也许”的语气理解；天气语境中的 sole 按“太阳/阳光”理解。"
+            } else {
+                ""
+            }
         )
     } else {
         format!(
@@ -667,6 +678,19 @@ mod tests {
         assert!(p.contains("上一段（仅供语境）：per oggi non"));
         assert!(p.contains("当前片段（只翻译这一段）：voglio più lavorare"));
         assert!(p.contains("严禁翻译或复述上一段"));
+    }
+
+    #[test]
+    fn italian_to_chinese_prompt_has_literal_realtime_hints() {
+        let p = build_prompt(
+            "quasi quasi vorrei andare a correre, oggi c'è il sole",
+            "it",
+            "zh",
+            true,
+        );
+        assert!(p.contains("残句开始或结束"));
+        assert!(p.contains("quasi quasi"));
+        assert!(p.contains("太阳/阳光"));
     }
 
     #[test]
