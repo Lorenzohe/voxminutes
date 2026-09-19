@@ -326,6 +326,26 @@ impl ModelState {
         stream: bool,
     ) -> Result<String> {
         let start_time = Instant::now();
+
+        // Hy-MT2 realtime translation keeps the model resident on the GPU but
+        // recreates llama_context for every committed segment. Clearing only
+        // the KV cache was not sufficient on the Windows/CUDA realtime path:
+        // the first request could succeed while a later request reused a
+        // context that stopped producing tokens. A fresh context isolates each
+        // translation without paying the much larger model reload cost.
+        let is_hymt2 = self
+            .model_path
+            .as_ref()
+            .and_then(|p| p.file_name())
+            .and_then(|s| s.to_str())
+            .map(|s| s.to_ascii_lowercase().contains("hy-mt2"))
+            .unwrap_or(false);
+        if is_hymt2 {
+            self.ctx = None;
+            self.prev_prompt_tokens.clear();
+            eprintln!("🔄 Creating fresh llama_context for Hy-MT2 request");
+        }
+
         let model = self.model.as_ref().context("Model not loaded")?;
 
         // Calculate thread count (conservative default: max(1, (Cores / 2) + 2))
@@ -369,14 +389,6 @@ impl ModelState {
         // the next generation wedged on some Windows/NVIDIA combinations.
         // Other llama-helper workloads (for example meeting summaries) may
         // still reuse their stable prompt prefix.
-        let is_hymt2 = self
-            .model_path
-            .as_ref()
-            .and_then(|p| p.file_name())
-            .and_then(|s| s.to_str())
-            .map(|s| s.to_ascii_lowercase().contains("hy-mt2"))
-            .unwrap_or(false);
-
         let prefix_hit = if is_hymt2 {
             0
         } else {
@@ -538,8 +550,11 @@ impl ModelState {
             ctx.decode(&mut batch).context("failed to eval")?;
         }
 
-        // Remember the full prompt for the next request's prefix reuse.
-        self.prev_prompt_tokens = tokens_list;
+        // Remember the full prompt only for workloads that intentionally reuse
+        // a persistent context. Hy-MT2 recreates its context per request.
+        if !is_hymt2 {
+            self.prev_prompt_tokens = tokens_list;
+        }
 
         // Generation statistics
         let total_time = start_time.elapsed();
