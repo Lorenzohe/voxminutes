@@ -6,8 +6,9 @@
 
 use crate::llama_sidecar::{self, GenerateParams};
 
-/// 模型目录（<models>/ 下），对应 model_download 注册表条目 hy-mt2-1.8b-q4_k_m。
-const MODEL_DIR: &str = "hy-mt2-1.8b-q6k";
+/// 实时 Hy-MT2 使用 Q4_K_M，优先保证 GTX 1660 SUPER 上的实时吞吐。
+/// Q6_K 保留在独立目录，后续专用于 History / Offline 高质量翻译。
+const MODEL_DIR: &str = "hy-mt2-1.8b";
 
 // ── 聊天模板（Hy-MT2 特殊 token）──────────────────────────────────────────────
 //
