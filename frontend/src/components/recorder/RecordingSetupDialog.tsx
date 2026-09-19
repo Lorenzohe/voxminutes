@@ -156,8 +156,25 @@ export function RecordingSetupDialog({ open, onOpenChange, onConfirm }: Recordin
     }
   }, [open, setMicMuted, home, setTranslateTargetLang])
 
-  const handleStart = () => {
+  const handleStart = async () => {
     if (!canStart) return
+
+    // Italian Whisper is translated by Hy-MT2, not OPUS-MT. The dialog defaults
+    // Whisper to `it`, which does not fire the language <select> onChange handler;
+    // therefore enforce the backend engine again at recording start so the
+    // realtime translation path cannot silently stay on OPUS and skip Italian.
+    if (language === 'it' && translateEnabled) {
+      const target = home === 'en' ? 'en' : 'zh'
+      if (translationEngine !== 'hymt2') {
+        await ipcSetTranslationEngine('hymt2')
+        setTranslationEngine('hymt2')
+      }
+      if (translateTargetLang !== target) {
+        await ipcSetTranslationTargetLang(target)
+        setTranslateTargetLang(target)
+      }
+    }
+
     onOpenChange(false)
     onConfirm({
       modelName,
@@ -191,7 +208,11 @@ export function RecordingSetupDialog({ open, onOpenChange, onConfirm }: Recordin
                     key={m.name}
                     type="button"
                     disabled={!available}
-                    onClick={() => available && setModelName(m.name)}
+                    onClick={() => {
+                      if (!available) return
+                      setModelName(m.name)
+                      setLanguage(defaultRecognitionLanguage(m.name))
+                    }}
                     className={cn(
                       'relative text-left rounded-lg border p-3 transition-all',
                       active
