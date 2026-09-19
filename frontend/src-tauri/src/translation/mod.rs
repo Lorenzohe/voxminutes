@@ -418,10 +418,11 @@ pub fn queue_partial_translation<R: Runtime>(
     if !TRANSLATION_ENABLED.load(Ordering::SeqCst) {
         return;
     }
-    // LLM/multilingual experimental engines are too expensive for 4-second
-    // Whisper previews on CPU. Translate committed finals only so ASR keeps
-    // priority and the translation queue cannot starve Whisper.
-    if matches!(current_engine().as_str(), "hymt2" | "m2m100") {
+    // Hy-MT2 Q4_K_M runs in the CUDA llama-helper on the Windows realtime
+    // path, so allow 4-second Whisper previews to be translated for live
+    // subtitles. M2M100 remains final-only because it shares CPU resources
+    // with ASR and can starve Whisper.
+    if current_engine() == "m2m100" {
         return;
     }
     let text = text.trim().to_string();
