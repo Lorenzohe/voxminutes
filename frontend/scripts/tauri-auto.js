@@ -47,14 +47,26 @@ if (platform === 'linux' && feature === 'cuda') {
   env.CMAKE_POSITION_INDEPENDENT_CODE = 'ON';
 }
 
-// Build the tauri command
-let tauriCmd = `tauri ${command}`;
-if (feature && feature !== 'none') {
-  tauriCmd += ` -- --features ${feature}`;
-  console.log(`🚀 Running: tauri ${command} with features: ${feature}`);
-} else {
-  console.log(`🚀 Running: tauri ${command} (CPU-only mode)`);
+// On Windows, GPU acceleration belongs to the independent llama-helper
+// sidecar, not the Tauri application crate. Build/copy the correct sidecar
+// before launching Tauri. Passing --features cuda to Tauri itself is invalid
+// because frontend/src-tauri does not define a cuda feature.
+if (platform === 'win32') {
+  const helperMode = feature === 'cuda' ? 'cuda' : 'cpu';
+  const helperBuild = `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-llama-helper.ps1 -Mode ${helperMode}`;
+  console.log(`🦙 Preparing llama-helper sidecar: ${helperMode}`);
+  try {
+    execSync(helperBuild, { stdio: 'inherit', env });
+  } catch (err) {
+    console.error('❌ llama-helper build failed');
+    process.exit(err.status || 1);
+  }
 }
+
+// The main Tauri crate remains CPU/ASR-oriented. Hy-MT2 GPU acceleration is
+// isolated inside llama-helper so Whisper behavior stays unchanged.
+const tauriCmd = `tauri ${command}`;
+console.log(`🚀 Running: ${tauriCmd}`);
 console.log('');
 
 // Execute the command
