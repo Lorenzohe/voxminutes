@@ -131,7 +131,7 @@ fn find_whisper_dir(model_name: &str) -> Option<PathBuf> {
     let preferred_names: &[&str] = match model_name {
         "whisper-small" => &["sherpa-onnx-whisper-small", "whisper-small"],
         "whisper-medium" => &["sherpa-onnx-whisper-medium", "whisper-medium"],
-        _ => &["sherpa-onnx-whisper-tiny", "whisper-tiny"],
+        _ => return None,
     };
 
     for name in preferred_names {
@@ -146,7 +146,7 @@ fn find_whisper_dir(model_name: &str) -> Option<PathBuf> {
     let expected_fragment = match model_name {
         "whisper-small" => "whisper-small",
         "whisper-medium" => "whisper-medium",
-        _ => "whisper-tiny",
+        _ => return None,
     };
     if let Ok(entries) = std::fs::read_dir(&base) {
         for entry in entries.flatten() {
@@ -227,12 +227,6 @@ pub async fn sherpa_onnx_get_models() -> Result<Vec<serde_json::Value>, String> 
 
     // Local multilingual Whisper models supporting Italian.
     for (name, size_mb, architecture, description) in [
-        (
-            "whisper-tiny",
-            250,
-            "Whisper Tiny Multilingual (Sherpa-ONNX Rust)",
-            "本地多语言识别，支持意大利语；速度优先",
-        ),
         (
             "whisper-small",
             376,
