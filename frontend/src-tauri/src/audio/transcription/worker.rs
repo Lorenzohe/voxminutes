@@ -660,26 +660,75 @@ fn strip_whisper_cross_segment_overlap(prev: &str, next: &str) -> String {
             .collect()
     }
 
+    fn is_italian_final_vowel_variant(a: &str, b: &str) -> bool {
+        if a == b {
+            return false;
+        }
+        let a_chars: Vec<char> = a.chars().collect();
+        let b_chars: Vec<char> = b.chars().collect();
+        if a_chars.len() != b_chars.len() || a_chars.len() < 6 {
+            return false;
+        }
+
+        let Some((&a_last, a_stem)) = a_chars.split_last() else { return false };
+        let Some((&b_last, b_stem)) = b_chars.split_last() else { return false };
+        const ITALIAN_ENDINGS: &[char] = &['a', 'e', 'i', 'o'];
+        a_stem == b_stem
+            && ITALIAN_ENDINGS.contains(&a_last)
+            && ITALIAN_ENDINGS.contains(&b_last)
+    }
+
     let prev_words: Vec<&str> = prev.split_whitespace().collect();
     let next_words: Vec<&str> = next.split_whitespace().collect();
     if prev_words.is_empty() || next_words.is_empty() {
         return next.trim().to_string();
     }
 
-    let max_overlap = 12usize.min(prev_words.len()).min(next_words.len());
+    let max_overlap = 16usize.min(prev_words.len()).min(next_words.len());
     for len in (1..=max_overlap).rev() {
         let prev_slice = &prev_words[prev_words.len() - len..];
         let next_slice = &next_words[..len];
-        let matches = prev_slice
-            .iter()
-            .zip(next_slice.iter())
-            .all(|(a, b)| normalize_word(a) == normalize_word(b));
+
+        let mut fuzzy_matches = 0usize;
+        let mut exact_matches = 0usize;
+        let mut matches = true;
+        for (a, b) in prev_slice.iter().zip(next_slice.iter()) {
+            let a_norm = normalize_word(a);
+            let b_norm = normalize_word(b);
+            if a_norm == b_norm {
+                exact_matches += 1;
+            } else if len >= 2
+                && fuzzy_matches == 0
+                && is_italian_final_vowel_variant(&a_norm, &b_norm)
+            {
+                // Allow at most one conservative Italian inflection difference
+                // inside a multi-word overlap, e.g. rilassato/rilassata.
+                fuzzy_matches += 1;
+            } else {
+                matches = false;
+                break;
+            }
+        }
         if !matches {
             continue;
         }
 
-        let safe_single_word = len == 1 && normalize_word(next_slice[0]).chars().count() >= 6;
+        // A fuzzy match must be anchored by at least one exact neighboring word.
+        if fuzzy_matches > 0 && exact_matches == 0 {
+            continue;
+        }
+
+        let safe_single_word =
+            len == 1 && normalize_word(next_slice[0]).chars().count() >= 6;
         if len >= 2 || safe_single_word {
+            if fuzzy_matches > 0 {
+                debug!(
+                    "Whisper overlap dedupe accepted Italian inflection variant: prev='{}' next='{}' words={}",
+                    prev_slice.join(" "),
+                    next_slice.join(" "),
+                    len
+                );
+            }
             return next_words[len..].join(" ").trim().to_string();
         }
     }
@@ -824,6 +873,39 @@ mod live_whisper_tests {
                 "questa macchina per migliorare la produzione"
             ),
             "per migliorare la produzione"
+        );
+    }
+
+    #[test]
+    fn strips_overlap_with_one_italian_final_vowel_variant() {
+        assert_eq!(
+            strip_whisper_cross_segment_overlap(
+                "no non mi sono rilassato",
+                "non mi sono rilassata oggi quindi"
+            ),
+            "oggi quindi"
+        );
+    }
+
+    #[test]
+    fn does_not_fuzzy_strip_unanchored_single_word() {
+        assert_eq!(
+            strip_whisper_cross_segment_overlap(
+                "rilassato",
+                "rilassata oggi"
+            ),
+            "rilassata oggi"
+        );
+    }
+
+    #[test]
+    fn does_not_accept_two_fuzzy_words_in_same_overlap() {
+        assert_eq!(
+            strip_whisper_cross_segment_overlap(
+                "giornata rilassato",
+                "giornate rilassata oggi"
+            ),
+            "giornate rilassata oggi"
         );
     }
 
