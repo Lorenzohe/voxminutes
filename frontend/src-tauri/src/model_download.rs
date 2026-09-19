@@ -358,25 +358,24 @@ const MODELS: &[DownloadableModel] = &[
     },
     // Hy-MT2 LLM translation model (GGUF, runs via the llama helper).
     DownloadableModel {
-        id: "hy-mt2-1.8b-q4_k_m",
-        display_name: "Hy-MT2-1.8B（高质量翻译）",
-        dir_name: "hy-mt2-1.8b",
+        id: "hy-mt2-1.8b-q6_k",
+        display_name: "Hy-MT2-1.8B Q6_K（高质量翻译测试）",
+        dir_name: "hy-mt2-1.8b-q6k",
         sources: &[
             ModelSource::Files {
                 base_url: "https://huggingface.co/tencent/Hy-MT2-1.8B-GGUF",
                 resolve_path: HF_RESOLVE,
-                files: &["Hy-MT2-1.8B-Q4_K_M.gguf"],
+                files: &["Hy-MT2-1.8B-Q6_K.gguf"],
             },
             ModelSource::Files {
                 base_url: "https://hf-mirror.com/tencent/Hy-MT2-1.8B-GGUF",
                 resolve_path: HF_RESOLVE,
-                files: &["Hy-MT2-1.8B-Q4_K_M.gguf"],
+                files: &["Hy-MT2-1.8B-Q6_K.gguf"],
             },
         ],
-        // Real size: final content-length of the resolve URL, verified
-        // 2026-07-25 via `curl -sIL "https://huggingface.co/tencent/Hy-MT2-1.8B-GGUF/resolve/main/Hy-MT2-1.8B-Q4_K_M.gguf"`.
-        size_bytes: 1_133_080_448,
-        required_files: &["Hy-MT2-1.8B-Q4_K_M.gguf"],
+        // Approximate Q6_K size from the official Tencent HuggingFace repository (~1.47 GB).
+        size_bytes: 1_470_000_000,
+        required_files: &["Hy-MT2-1.8B-Q6_K.gguf"],
     },
 ];
 
@@ -417,7 +416,7 @@ pub(crate) fn m2m100_installed() -> bool {
     }
 }
 
-pub const HY_MT2_MODEL_ID: &str = "hy-mt2-1.8b-q4_k_m";
+pub const HY_MT2_MODEL_ID: &str = "hy-mt2-1.8b-q6_k";
 
 /// Whether the Hy-MT2 translation model is installed.
 pub(crate) fn hy_mt2_installed() -> bool {
@@ -1481,7 +1480,7 @@ mod tests {
             "qwen2.5-3b-instruct-q4_k_m",
             "qwen3-4b-instruct-2507-q4_k_m",
             "gemma-3-4b-it-q4_k_m",
-            "hy-mt2-1.8b-q4_k_m",
+            "hy-mt2-1.8b-q6_k",
         ] {
             assert_eq!(import_kind(find_model(id).unwrap()), ImportKind::GgufFile);
         }
@@ -1512,13 +1511,13 @@ mod tests {
         }
 
         // GGUF 模型：单文件直链。
-        let m = find_model("hy-mt2-1.8b-q4_k_m").unwrap();
+        let m = find_model("hy-mt2-1.8b-q6_k").unwrap();
         let labels: Vec<_> = m.sources.iter().map(source_label_of).collect();
         assert_eq!(labels, ["HuggingFace", "hf-mirror 镜像"]);
         for s in m.sources {
             let urls = source_urls(s);
             assert_eq!(urls.len(), 1);
-            assert!(urls[0].ends_with("Hy-MT2-1.8B-Q4_K_M.gguf"));
+            assert!(urls[0].ends_with("Hy-MT2-1.8B-Q6_K.gguf"));
         }
     }
 
