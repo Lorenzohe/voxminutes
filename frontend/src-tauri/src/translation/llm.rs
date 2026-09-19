@@ -650,6 +650,13 @@ mod tests {
     use super::*;
 
     #[test]
+    fn selectable_hymt2_engines_only_change_model_directory() {
+        assert_eq!(model_dir_for_engine("hymt2-q4"), "hy-mt2-1.8b");
+        assert_eq!(model_dir_for_engine("hymt2-q6"), "hy-mt2-1.8b-q6k");
+        assert_eq!(model_dir_for_engine("hymt2"), "hy-mt2-1.8b-q6k");
+    }
+
+    #[test]
     fn restores_changed_numeric_values_positionally() {
         let source = "le 6 e 40 di pomeriggio, le 18 e 40";
         let translated = "下午6点40分，晚上8点40分";
