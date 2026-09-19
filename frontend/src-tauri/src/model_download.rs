@@ -289,7 +289,7 @@ const MODELS: &[DownloadableModel] = &[
     // Hy-MT2 realtime translation model (GGUF, runs via the llama helper).
     DownloadableModel {
         id: "hy-mt2-1.8b-q4_k_m",
-        display_name: "Hy-MT2-1.8B Q4_K_M（备用实时翻译）",
+        display_name: "HY-MT2-1.8B-Q4_K_M",
         dir_name: "hy-mt2-1.8b",
         sources: &[
             ModelSource::Files {
