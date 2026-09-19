@@ -228,6 +228,7 @@ struct TranslateTask {
     text: String,
     sequence_id: u64,
     is_partial: bool,
+    context_before: Option<String>,
 }
 
 static TRANSLATE_QUEUE: LazyLock<Mutex<VecDeque<TranslateTask>>> =
@@ -237,6 +238,16 @@ static TRANSLATE_QUEUE: LazyLock<Mutex<VecDeque<TranslateTask>>> =
 static TRANSLATE_SEEN: LazyLock<Mutex<HashSet<u64>>> =
     LazyLock::new(|| Mutex::new(HashSet::new()));
 
+/// 上一个 committed final 原文。仅给 1-2 词的 Hy-MT2 final 做词义消歧，
+/// 不改变字幕时间轴，也不把上下文内容并入当前译文。
+static LAST_FINAL_SOURCE: LazyLock<Mutex<Option<String>>> =
+    LazyLock::new(|| Mutex::new(None));
+
+fn is_short_context_fragment(text: &str) -> bool {
+    let words = text.split_whitespace().filter(|w| !w.trim().is_empty()).count();
+    words > 0 && words <= 2 && text.chars().filter(|c| c.is_alphanumeric()).count() <= 24
+}
+
 /// 新录音开始（sequence 重置）：清空待译队列与已见集合。
 pub fn reset_translation_session() {
     if let Ok(mut q) = TRANSLATE_QUEUE.lock() {
@@ -244,6 +255,9 @@ pub fn reset_translation_session() {
     }
     if let Ok(mut seen) = TRANSLATE_SEEN.lock() {
         seen.clear();
+    }
+    if let Ok(mut last) = LAST_FINAL_SOURCE.lock() {
+        *last = None;
     }
 }
 
@@ -344,6 +358,20 @@ pub fn queue_translation<R: Runtime>(app: &AppHandle<R>, text: &str, sequence_id
     if resolve_direction(&text, &target).is_none() {
         return;
     }
+
+    let engine_kind = current_engine();
+    let context_before = if engine_kind == "hymt2" && is_short_context_fragment(&text) {
+        LAST_FINAL_SOURCE
+            .lock()
+            .ok()
+            .and_then(|last| last.clone())
+    } else {
+        None
+    };
+    if let Ok(mut last) = LAST_FINAL_SOURCE.lock() {
+        *last = Some(text.clone());
+    }
+
     if let Ok(mut q) = TRANSLATE_QUEUE.lock() {
         // A committed final is authoritative. Drop stale previews for the same
         // row and prioritize finals ahead of all queued partial previews while
@@ -356,14 +384,16 @@ pub fn queue_translation<R: Runtime>(app: &AppHandle<R>, text: &str, sequence_id
                 text,
                 sequence_id,
                 is_partial: false,
+                context_before,
             },
         );
         log::info!(
-            "Translation queued: seq={} queue_len={} engine={} target={}",
+            "Translation queued: seq={} queue_len={} engine={} target={} contextual={}",
             sequence_id,
             q.len(),
-            current_engine(),
-            target
+            engine_kind,
+            target,
+            q.get(insert_at).and_then(|task| task.context_before.as_ref()).is_some()
         );
     }
     if let Ok(mut seen) = TRANSLATE_SEEN.lock() {
@@ -422,6 +452,7 @@ pub fn queue_partial_translation<R: Runtime>(
             text,
             sequence_id,
             is_partial: true,
+            context_before: None,
         });
     }
     kick_translation_worker(app);
@@ -509,6 +540,7 @@ pub async fn process_pending_translations<R: Runtime>(app: AppHandle<R>) {
         let text = task.text.clone();
         let seq = task.sequence_id;
         let task_is_partial = task.is_partial;
+        let context_before = task.context_before.clone();
         let engine_kind = current_engine();
         let direction_for_task = direction.clone();
         let app_for_stream = app.clone();
@@ -531,11 +563,7 @@ pub async fn process_pending_translations<R: Runtime>(app: AppHandle<R>) {
                 let mut partial = String::new();
                 let mut tokens_since_emit = 0usize;
                 let mut last_emit = std::time::Instant::now();
-                llm::translate(
-                    &text,
-                    &direction_for_task,
-                    true,
-                    Some(&mut |delta: &str| {
+                let mut on_delta = |delta: &str| {
                         partial.push_str(delta);
                         tokens_since_emit += 1;
                         if tokens_since_emit >= 8
@@ -561,8 +589,23 @@ pub async fn process_pending_translations<R: Runtime>(app: AppHandle<R>) {
                                 log::warn!("translate-update (partial) emit failed: {}", e);
                             }
                         }
-                    }),
-                )
+                    };
+
+                if let Some(context) = context_before.as_deref() {
+                    llm::translate_with_context(
+                        &text,
+                        context,
+                        &direction_for_task,
+                        Some(&mut on_delta),
+                    )
+                } else {
+                    llm::translate(
+                        &text,
+                        &direction_for_task,
+                        true,
+                        Some(&mut on_delta),
+                    )
+                }
             } else {
                 get_engine(&direction_for_task).and_then(|engine| {
                     engine.translate_greedy(&text).map_err(|e| e.to_string())
@@ -623,12 +666,21 @@ mod tests {
     use super::*;
 
     #[test]
+    fn short_context_fragment_detection_is_conservative() {
+        assert!(is_short_context_fragment("palestra."));
+        assert!(is_short_context_fragment("Ho fatto"));
+        assert!(!is_short_context_fragment("forse potrei andare in palestra"));
+        assert!(!is_short_context_fragment(""));
+    }
+
+    #[test]
     fn final_tasks_are_prioritized_ahead_of_partials() {
         let mut q = VecDeque::new();
         q.push_back(TranslateTask {
             text: "preview".into(),
             sequence_id: 1,
             is_partial: true,
+            context_before: None,
         });
         let insert_at = q.iter().position(|task| task.is_partial).unwrap_or(q.len());
         q.insert(
@@ -637,6 +689,7 @@ mod tests {
                 text: "final".into(),
                 sequence_id: 1,
                 is_partial: false,
+                context_before: None,
             },
         );
         assert!(!q[0].is_partial);
