@@ -121,7 +121,9 @@ pub async fn set_translation_engine(
     // Q6 route, so migrate it to the explicit Q6 id.
     let engine = match engine.as_str() {
         "hymt2" => "hymt2-q6".to_string(),
-        "opus" | "hymt2-q4" | "hymt2-q6" => engine,
+        "opus" => "opus".to_string(),
+        "hymt2-q4" => "hymt2-q4".to_string(),
+        "hymt2-q6" => "hymt2-q6".to_string(),
         _ => return Err(format!("不支持的翻译引擎: {}", engine)),
     };
 
