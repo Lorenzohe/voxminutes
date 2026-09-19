@@ -30,8 +30,15 @@ const STOP_TOKENS: &[&str] = &[
 
 // ── 采样参数（移植自参考实现 TranslationEngine 默认值）────────────────────────
 
-const CONTEXT_SIZE: u32 = 4096;
-const TEMPERATURE: f32 = 0.3;
+// Realtime committed ASR segments are short. Keeping their KV/context budget at
+// 2048 lowers VRAM pressure and context setup cost on 6 GB GPUs. Manual/long
+// text translation keeps the original 4096-token budget.
+const REALTIME_CONTEXT_SIZE: u32 = 2048;
+const LONGFORM_CONTEXT_SIZE: u32 = 4096;
+
+// Translation should be stable and repeatable. llama-helper preserves the
+// repeat/frequency penalties even in greedy mode.
+const TEMPERATURE: f32 = 0.0;
 const TOP_K: i32 = 20;
 const TOP_P: f32 = 0.6;
 const REPEAT_PENALTY: f32 = 1.15;
@@ -107,7 +114,7 @@ pub(crate) fn build_prompt(text: &str, source_lang: &str, target_lang: &str, asr
                  要求：\n\
                  1. 只输出{tgt_en}译文，严禁输出原文、双语对照、原文片段或重复原文；\n\
                  2. 直接开始翻译，不要写“翻译：”“{tgt_en}：”等任何前缀；\n\
-                 3. 完整保留原文每一项语义，不得省略、概括、合并或添加内容；\n\
+                 3. 完整保留原文每一项语义，尤其是具体动作、时间、数量、否定和专有名词；不得省略、概括、合并、添加内容，或用相关但不同的动作/事实替换；\n\
                  4. 仅在明显是语音识别错误时做最小纠正，不得改变原意；\n\
                  5. 保留有意义的感叹、重复和语气表达，同时输出流畅自然的口语翻译；\n\
                  6. 不要解释，不要备注。"
@@ -120,7 +127,7 @@ pub(crate) fn build_prompt(text: &str, source_lang: &str, target_lang: &str, asr
                  Do NOT output the original text, bilingual pairs, source fragments, or repeated source.\n\
                  2. Start directly with the translation; \
                  do not write prefixes like \"Translation:\" or \"{tgt_en}:\".\n\
-                 3. Preserve every semantic unit; do not omit, summarize, merge, or add content.\n\
+                 3. Preserve every semantic unit, especially concrete actions, time, quantities, negation, and proper nouns; do not omit, summarize, merge, add content, or substitute a related but different action/fact.\n\
                  4. Correct only obvious ASR errors with the smallest possible change; do not change the meaning.\n\
                  5. Preserve meaningful interjections, repetitions, and tone while producing fluent natural speech.\n\
                  6. Do not explain or add notes."
@@ -131,11 +138,11 @@ pub(crate) fn build_prompt(text: &str, source_lang: &str, target_lang: &str, asr
         let (tgt_native, tgt_en) = lang_names(target_lang);
         let instruction = if is_chinese_family(source_lang) {
             format!(
-                "将以下文本翻译为{tgt_native}，注意只需要输出翻译后的结果，不要额外解释"
+                "将以下文本翻译为{tgt_native}。忠实保留具体动作、时间、数量和否定，不要替换成相关但不同的概念；只输出译文，不要额外解释"
             )
         } else {
             format!(
-                "Translate the following text into {tgt_en}. Only output the translated result, without any additional explanation."
+                "Translate the following text into {tgt_en}. Preserve concrete actions, time, quantities, negation, and proper nouns faithfully; do not substitute related but different concepts. Output only the translated result, without any additional explanation."
             )
         };
         format!("{instruction}:\n\n{text}")
@@ -355,10 +362,22 @@ pub fn translate(
     // faithful direct translation for short inputs and reserve ASR correction
     // for longer transcript segments.
     let use_asr_correction = use_asr_correction_prompt(text, asr_mode);
-    let faithful_short = asr_mode && !use_asr_correction;
     let prompt = build_prompt(text, source_lang, target_lang, use_asr_correction);
-    // 输出预算按输入字符数估算（译文 token 数通常不超过原文字符数的两倍）
-    let max_tokens = (text.chars().count() * 2).clamp(64, 1024) as u32;
+    // Realtime ASR segments do not need the 4096-token long-form context. A
+    // smaller context lowers KV memory/setup overhead and keeps more VRAM free
+    // for full GPU offload on GTX 1660 SUPER-class cards.
+    let context_size = if asr_mode {
+        REALTIME_CONTEXT_SIZE
+    } else {
+        LONGFORM_CONTEXT_SIZE
+    };
+    // Bound runaway generations more tightly for realtime work so one bad
+    // segment cannot create a long translation backlog.
+    let max_tokens = if asr_mode {
+        (text.chars().count() * 2).clamp(48, 384) as u32
+    } else {
+        (text.chars().count() * 2).clamp(64, 1024) as u32
+    };
     // 韩语目标重复率偏高，按参考实现加大惩罚
     let (repeat_penalty, frequency_penalty) = if target_lang == "ko" {
         (KO_REPEAT_PENALTY, KO_FREQUENCY_PENALTY)
@@ -372,8 +391,8 @@ pub fn translate(
             model_path: model_path.to_string_lossy().to_string(),
             prompt,
             max_tokens,
-            context_size: CONTEXT_SIZE,
-            temperature: if faithful_short { 0.1 } else { TEMPERATURE },
+            context_size,
+            temperature: TEMPERATURE,
             top_k: TOP_K,
             top_p: TOP_P,
             repeat_penalty: Some(repeat_penalty),
@@ -401,7 +420,7 @@ pub fn warmup() -> Result<(), String> {
             model_path: model_path.to_string_lossy().to_string(),
             prompt: "Hi".to_string(),
             max_tokens: 1,
-            context_size: CONTEXT_SIZE,
+            context_size: REALTIME_CONTEXT_SIZE,
             temperature: TEMPERATURE,
             top_k: TOP_K,
             top_p: TOP_P,
@@ -455,7 +474,7 @@ mod tests {
         assert!(p.contains("将以下Chinese语音转录文本翻译为English。"));
         // 完整 6 条要求（中文版）
         assert!(p.contains("1. 只输出English译文，严禁输出原文、双语对照、原文片段或重复原文；"));
-        assert!(p.contains("3. 完整保留原文每一项语义，不得省略、概括、合并或添加内容；"));
+        assert!(p.contains("3. 完整保留原文每一项语义，尤其是具体动作、时间、数量、否定和专有名词；"));
         assert!(p.contains("6. 不要解释，不要备注。"));
         assert!(p.contains("Source: 今天天气不错"));
         assert!(p.contains("Target (English):"));
@@ -565,7 +584,7 @@ mod tests {
         assert!(p.contains("Translate the following English spoken transcript into Japanese."));
         // 完整 6 条要求（英文版）
         assert!(p.contains("1. Output ONLY the Japanese translation."));
-        assert!(p.contains("3. Preserve every semantic unit; do not omit, summarize, merge, or add content."));
+        assert!(p.contains("3. Preserve every semantic unit, especially concrete actions, time, quantities, negation, and proper nouns;"));
         assert!(p.contains("6. Do not explain or add notes."));
         assert!(p.contains("Source: hello world"));
         assert!(p.contains("Target (Japanese):"));
