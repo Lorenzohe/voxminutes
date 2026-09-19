@@ -273,19 +273,21 @@ fn previous_final_needs_context(previous: &str) -> bool {
     // boundaries. For example, "non è" + "stata una giornata corta" must keep
     // the negation available to the translator even though overlap dedupe
     // removes "non è" from the next visible transcript segment.
-    let semantic_tail = normalized_words
-        .iter()
-        .rev()
-        .take(3)
-        .rev()
-        .cloned()
-        .collect::<Vec<_>>()
-        .join(" ");
-    if matches!(
-        semantic_tail.as_str(),
-        "non è" | "non sono" | "non ero" | "non era" | "non sarà"
-            | "non mi sono" | "non si è" | "non c è"
-    ) {
+    let normalized_text = normalized_words.join(" ");
+    const SEMANTIC_SUFFIXES: &[&str] = &[
+        "non è",
+        "non sono",
+        "non ero",
+        "non era",
+        "non sarà",
+        "non mi sono",
+        "non si è",
+        "non c è",
+    ];
+    if SEMANTIC_SUFFIXES.iter().any(|suffix| {
+        normalized_text == *suffix
+            || normalized_text.ends_with(&format!(" {}", suffix))
+    }) {
         return true;
     }
 
