@@ -112,25 +112,36 @@ pub(crate) fn resolve_helper_exe() -> Option<PathBuf> {
     let plain_name = format!("llama-helper{}", EXE_SUFFIX);
     let mut candidates: Vec<PathBuf> = Vec::new();
 
+    // In dev builds, always prefer the explicitly prepared sidecar in
+    // src-tauri/binaries. scripts/tauri-auto.js rebuilds this file with the
+    // detected CUDA feature before launching Tauri. A stale plain
+    // target/debug/llama-helper.exe may otherwise shadow it and silently run
+    // the CPU-only helper.
+    let dev_sidecar = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("binaries")
+        .join(format!("llama-helper-x86_64-pc-windows-msvc{}", EXE_SUFFIX));
+    if cfg!(debug_assertions) {
+        candidates.push(dev_sidecar.clone());
+    }
+
     if let Ok(exe) = std::env::current_exe() {
         if let Some(exe_dir) = exe.parent() {
-            // 1. Bundled layouts. Tauri externalBin strips the target triple
-            //    when bundling, so the sidecar lands next to the app exe as
-            //    plain `llama-helper.exe`.
+            // Bundled layouts. Tauri externalBin strips the target triple
+            // when bundling, so the sidecar lands next to the app exe as
+            // plain `llama-helper.exe`.
             candidates.push(exe_dir.join(&sidecar_name));
             candidates.push(exe_dir.join("binaries").join(&sidecar_name));
             candidates.push(exe_dir.join(&plain_name));
         }
     }
 
-    // 2. Dev: prebuilt sidecar checked into / copied to src-tauri/binaries/.
-    candidates.push(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("binaries")
-            .join(format!("llama-helper-x86_64-pc-windows-msvc{}", EXE_SUFFIX)),
-    );
+    // Release builds keep bundled layouts first; this source-tree path is only
+    // a fallback for developer machines.
+    if !cfg!(debug_assertions) {
+        candidates.push(dev_sidecar);
+    }
 
-    // 3. Dev: workspace target dir (exe is target/{profile}/voxminutes.exe).
+    // Dev fallback: workspace target dir (exe is target/{profile}/voxminutes.exe).
     if let Ok(exe) = std::env::current_exe() {
         if let Some(exe_dir) = exe.parent() {
             if let Some(target_dir) = exe_dir
@@ -162,6 +173,7 @@ pub(crate) fn find_gguf_model(dir_name: &str) -> Option<PathBuf> {
 // ── Sidecar process management ────────────────────────────────────────────────
 
 fn spawn_helper(exe: &Path) -> Result<HelperProcess, String> {
+    log::info!("Launching llama-helper sidecar: {}", exe.display());
     let mut cmd = Command::new(exe);
     cmd.stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -189,6 +201,17 @@ fn spawn_helper(exe: &Path) -> Result<HelperProcess, String> {
             let reader = BufReader::new(stderr);
             for line in reader.lines() {
                 let Ok(line) = line else { break };
+                // Surface the GPU diagnostics that matter for verifying the
+                // Windows Hy-MT2 path without flooding the main log with every
+                // token/generation statistic emitted by the helper.
+                if line.contains("Backend build:")
+                    || line.contains("CUDA VRAM detected")
+                    || line.contains("Full offload possible")
+                    || line.contains("Memory constrained. Offloading")
+                    || line.contains("using CPU only")
+                {
+                    log::info!("llama-helper: {}", line);
+                }
                 if let Ok(mut buf) = tail.lock() {
                     const MAX_TAIL: usize = 4000;
                     buf.push_str(&line);
