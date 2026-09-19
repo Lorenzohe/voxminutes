@@ -36,16 +36,24 @@ pub(crate) static TARGET_LANG: LazyLock<Mutex<String>> = LazyLock::new(|| Mutex:
 /// 不参与实时方向解析。
 pub(crate) static HOME_LANG: LazyLock<Mutex<String>> = LazyLock::new(|| Mutex::new("zh".to_string()));
 
-/// 翻译引擎选择："opus"（中英快速）| "hymt2"（高质量多语言 LLM）。
+/// 翻译引擎选择："opus"（中英快速）| "hymt2-q4" | "hymt2-q6"（多语言 LLM）。
 pub(crate) static TRANSLATION_ENGINE: LazyLock<Mutex<String>> =
     LazyLock::new(|| Mutex::new("opus".to_string()));
 
-/// 当前翻译引擎 id（"opus" | "hymt2"）。
+/// 当前翻译引擎 id："opus" | "hymt2-q4" | "hymt2-q6"。
+/// 旧设置 "hymt2" 自动迁移为 Q6，保持此前最终调试版行为。
 pub fn current_engine() -> String {
     TRANSLATION_ENGINE
         .lock()
-        .map(|e| e.clone())
+        .map(|e| match e.as_str() {
+            "hymt2" => "hymt2-q6".to_string(),
+            _ => e.clone(),
+        })
         .unwrap_or_else(|_| "opus".to_string())
+}
+
+pub fn is_hymt2_engine(engine: &str) -> bool {
+    matches!(engine, "hymt2" | "hymt2-q4" | "hymt2-q6")
 }
 
 /// 当前目标语言设置（13 种语言代码之一）。
@@ -382,7 +390,7 @@ pub struct TranslateUpdate {
 /// 支持时也返回 None（跳过）。
 fn resolve_direction(text: &str, target: &str) -> Option<(String, String, String)> {
     let engine = current_engine();
-    if engine == "hymt2" {
+    if is_hymt2_engine(&engine) {
         // Hy-MT2: prefer the explicit ASR language hint.
         // 拉丁字母语言仅靠字符特征无法可靠区分（例如意大利语会被误判为英语），
         // 因此录音场景里 language=it 应直接驱动 it -> target 翻译。
@@ -460,7 +468,7 @@ pub fn queue_translation<R: Runtime>(app: &AppHandle<R>, text: &str, sequence_id
         .lock()
         .ok()
         .and_then(|last| last.clone());
-    let context_before = if engine_kind == "hymt2"
+    let context_before = if is_hymt2_engine(&engine_kind)
         && should_attach_previous_context(&text, previous_final.as_deref())
     {
         previous_final
@@ -524,7 +532,7 @@ pub fn queue_partial_translation<R: Runtime>(
     // updates the source transcript live; committed segments are translated
     // immediately by queue_translation(). OPUS previews remain enabled because
     // that engine is much cheaper and does not occupy the llama sidecar.
-    if current_engine() == "hymt2" {
+    if is_hymt2_engine(&current_engine()) {
         return;
     }
 
@@ -658,8 +666,8 @@ pub async fn process_pending_translations<R: Runtime>(app: AppHandle<R>) {
         );
 
         let result = tokio::task::spawn_blocking(move || {
-            if engine_kind == "hymt2" {
-                // Hy-MT2 LLM 引擎：走 llama-helper sidecar，ASR 模式指令；
+            if is_hymt2_engine(&engine_kind) {
+                // Hy-MT2 Q4/Q6 共用同一套最终版 ASR 翻译逻辑，仅模型文件不同；
                 // 流式生成，节流 emit 部分译文（原始输出快照，未清洗）
                 let mut partial = String::new();
                 let mut tokens_since_emit = 0usize;
@@ -693,17 +701,19 @@ pub async fn process_pending_translations<R: Runtime>(app: AppHandle<R>) {
                     };
 
                 if let Some(context) = context_before.as_deref() {
-                    llm::translate_with_context(
+                    llm::translate_with_context_for_engine(
                         &text,
                         context,
                         &direction_for_task,
+                        &engine_kind,
                         Some(&mut on_delta),
                     )
                 } else {
-                    llm::translate(
+                    llm::translate_for_engine(
                         &text,
                         &direction_for_task,
                         true,
+                        &engine_kind,
                         Some(&mut on_delta),
                     )
                 }
