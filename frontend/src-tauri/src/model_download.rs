@@ -1512,6 +1512,7 @@ mod tests {
             "qwen2.5-3b-instruct-q4_k_m",
             "qwen3-4b-instruct-2507-q4_k_m",
             "gemma-3-4b-it-q4_k_m",
+            "hy-mt2-1.8b-q4_k_m",
             "hy-mt2-1.8b-q6_k",
         ] {
             assert_eq!(import_kind(find_model(id).unwrap()), ImportKind::GgufFile);
