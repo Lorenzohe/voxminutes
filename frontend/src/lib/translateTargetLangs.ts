@@ -23,7 +23,7 @@ export const HYMT2_TARGET_LANGS = [
 
 /** 按引擎返回可选目标语言代码列表（全量，不排除 home） */
 export function getTranslateTargetLangs(engine: TranslationEngine): string[] {
-  if (engine === 'hymt2') return [...HYMT2_TARGET_LANGS]
+  if (engine === 'hymt2-q4' || engine === 'hymt2-q6') return [...HYMT2_TARGET_LANGS]
   return [...OPUS_TARGET_LANGS]
 }
 
