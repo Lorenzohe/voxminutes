@@ -35,6 +35,16 @@ interface RecordingSetupDialogProps {
 const selectCls =
   'h-8 w-full rounded-md border border-input bg-background px-2 text-xs shadow-sm focus:outline-none focus:ring-1 focus:ring-ring disabled:cursor-not-allowed disabled:opacity-50'
 
+/**
+ * Whisper is primarily used for the Italian meeting workflow in this build.
+ * Default it to Italian instead of auto-detect so short/final chunks cannot
+ * drift into other Latin languages. The user can still manually choose Auto
+ * Detect or English in the dialog.
+ */
+function defaultRecognitionLanguage(modelName: string): string {
+  return modelName.startsWith('whisper-') ? 'it' : 'auto'
+}
+
 /** 开始录音前的设置对话框：模型 / 设备 / 语言 / 静音选项 */
 export function RecordingSetupDialog({ open, onOpenChange, onConfirm }: RecordingSetupDialogProps) {
   const models = useAppStore((s) => s.models)
@@ -55,7 +65,7 @@ export function RecordingSetupDialog({ open, onOpenChange, onConfirm }: Recordin
   const [modelName, setModelName] = useState(selectedModel)
   const [micDevice, setMicDevice] = useState('')
   const [systemDevice, setSystemDevice] = useState('')
-  const [language, setLanguage] = useState('auto')
+  const [language, setLanguage] = useState(() => defaultRecognitionLanguage(selectedModel))
   const [devices, setDevices] = useState<AudioDevice[]>([])
   const [defaults, setDefaults] = useState<DefaultDevicesInfo>({ microphone: null, speaker: null })
 
@@ -130,10 +140,11 @@ export function RecordingSetupDialog({ open, onOpenChange, onConfirm }: Recordin
   // 打开时重置为 store 里的当前选择并刷新设备列表；麦克风默认静音（与主窗口状态互通）
   useEffect(() => {
     if (!open) return
-    setModelName(useAppStore.getState().selectedModel)
+    const currentModel = useAppStore.getState().selectedModel
+    setModelName(currentModel)
     setMicDevice('')
     setSystemDevice('')
-    setLanguage('auto')
+    setLanguage(defaultRecognitionLanguage(currentModel))
     setMicMuted(true)
     listAudioDevices().then(setDevices).catch(() => setDevices([]))
     getDefaultAudioDevices().then(setDefaults).catch(() => {})
