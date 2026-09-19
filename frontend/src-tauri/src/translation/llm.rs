@@ -261,6 +261,69 @@ fn normalize_for_dedup(s: &str) -> String {
         .collect()
 }
 
+fn extract_numeric_tokens(text: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    let mut chars = text.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        if ch.is_ascii_digit() {
+            current.push(ch);
+            while let Some(next) = chars.peek().copied() {
+                if next.is_ascii_digit() {
+                    current.push(next);
+                    chars.next();
+                } else if (next == '.' || next == ',')
+                    && chars
+                        .clone()
+                        .nth(1)
+                        .map(|after| after.is_ascii_digit())
+                        .unwrap_or(false)
+                {
+                    current.push(next);
+                    chars.next();
+                } else {
+                    break;
+                }
+            }
+            tokens.push(std::mem::take(&mut current));
+        }
+    }
+
+    tokens
+}
+
+/// Hy-MT2 occasionally changes a number while otherwise translating correctly
+/// (for example Italian "18 e 40" -> Chinese "8点40"). When source and target
+/// contain the same number of numeric tokens, restore them positionally from
+/// the source. This is deliberately conservative: if counts differ, leave the
+/// model output untouched rather than guessing.
+fn restore_numeric_tokens(source: &str, translated: &str) -> String {
+    let source_numbers = extract_numeric_tokens(source);
+    if source_numbers.is_empty() {
+        return translated.to_string();
+    }
+    let target_numbers = extract_numeric_tokens(translated);
+    if source_numbers.len() != target_numbers.len() {
+        return translated.to_string();
+    }
+
+    let mut result = translated.to_string();
+    let mut search_from = 0usize;
+    for (expected, actual) in source_numbers.iter().zip(target_numbers.iter()) {
+        let Some(rel) = result[search_from..].find(actual) else {
+            return translated.to_string();
+        };
+        let start = search_from + rel;
+        let end = start + actual.len();
+        if expected != actual {
+            result.replace_range(start..end, expected);
+        }
+        search_from = start + expected.len();
+    }
+    result
+}
+
 /// 折叠连续重复段落（模型陷入循环时的安全网；间隔不同内容的有意重复会保留）。
 fn dedup_consecutive_paragraphs(text: &str) -> String {
     if text.trim().is_empty() {
@@ -435,7 +498,9 @@ fn translate_internal(
         on_token,
     )?;
 
-    Ok(postprocess(&raw, source_lang, target_lang))
+    let cleaned = postprocess(&raw, source_lang, target_lang);
+    let numeric_safe = restore_numeric_tokens(text, &cleaned);
+    Ok(numeric_safe)
 }
 
 pub fn translate(
@@ -489,6 +554,26 @@ pub fn warmup() -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn restores_changed_numeric_values_positionally() {
+        let source = "le 6 e 40 di pomeriggio, le 18 e 40";
+        let translated = "下午6点40分，晚上8点40分";
+        assert_eq!(
+            restore_numeric_tokens(source, translated),
+            "下午6点40分，晚上18点40分"
+        );
+    }
+
+    #[test]
+    fn leaves_numeric_output_untouched_when_counts_differ() {
+        let source = "misura 12.5 mm";
+        let translated = "尺寸约为12.5毫米，共2件";
+        assert_eq!(
+            restore_numeric_tokens(source, translated),
+            translated
+        );
+    }
 
     #[test]
     fn short_asr_phrases_use_faithful_direct_translation() {
