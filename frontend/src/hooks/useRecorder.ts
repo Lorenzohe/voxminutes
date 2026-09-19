@@ -183,7 +183,7 @@ export function useRecorder() {
           modelToUse.startsWith('whisper-') &&
           options.language === 'auto' &&
           appState.translateEnabled &&
-          appState.translationEngine === 'hymt2'
+          appState.translationEngine !== 'opus'
             ? 'it'
             : options.language
 
