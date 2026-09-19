@@ -488,11 +488,24 @@ async fn start_window_drag<R: Runtime>(window: tauri::WebviewWindow<R>) -> Resul
 
 #[tauri::command]
 async fn set_language_preference(language: String) -> Result<(), String> {
+    // In the realtime Whisper + Hy-MT2 workflow, Auto is effectively the
+    // Italian meeting profile. Persist that effective language in the backend
+    // too, so translation direction does not fall back to heuristic Latin
+    // language detection for short fragments.
+    let effective_language = if language == "auto"
+        && translation::TRANSLATION_ENABLED.load(Ordering::SeqCst)
+        && translation::current_engine() == "hymt2"
+    {
+        "it".to_string()
+    } else {
+        language
+    };
+
     let mut lang_pref = LANGUAGE_PREFERENCE
         .lock()
         .map_err(|e| format!("Failed to set language preference: {}", e))?;
-    log_info!("Setting language preference to: {}", language);
-    *lang_pref = language;
+    log_info!("Setting language preference to: {}", effective_language);
+    *lang_pref = effective_language;
     Ok(())
 }
 
