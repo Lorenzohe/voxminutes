@@ -418,7 +418,7 @@ pub fn queue_partial_translation<R: Runtime>(
     if !TRANSLATION_ENABLED.load(Ordering::SeqCst) {
         return;
     }
-    // Hy-MT2 Q4_K_M runs in the CUDA llama-helper on the Windows realtime
+    // Hy-MT2 Q6_K runs in the CUDA llama-helper on the Windows realtime
     // path, so allow 4-second Whisper previews to be translated for live
     // subtitles. M2M100 remains final-only because it shares CPU resources
     // with ASR and can starve Whisper.
