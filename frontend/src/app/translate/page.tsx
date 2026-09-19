@@ -51,7 +51,11 @@ export default function TranslatePage() {
     let cancelled = false
     ;(async () => {
       const home = useLanguageStore.getState().language
-      const engine = await getTranslationEngine().catch(() => 'opus' as TranslationEngine)
+      let engine = await getTranslationEngine().catch(() => 'opus' as TranslationEngine)
+      if ((engine as string) === 'hymt2') {
+        engine = 'hymt2-q6'
+        ipcSetTranslationEngine(engine).catch(() => {})
+      }
       if (cancelled) return
       setEngine(engine)
       await setTranslationHomeLang(home).catch(() => {})
@@ -223,7 +227,8 @@ export default function TranslatePage() {
           title={t.trEngine}
         >
           <option value="opus">{t.trEngineOpus}</option>
-          <option value="hymt2">{t.trEngineHymt2}</option>
+          <option value="hymt2-q4">HY-MT2-Q4</option>
+          <option value="hymt2-q6">HY-MT2-Q6</option>
         </select>
 
         <div className="flex-1" />
