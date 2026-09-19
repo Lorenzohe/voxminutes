@@ -144,6 +144,44 @@ pub(crate) fn build_prompt(text: &str, source_lang: &str, target_lang: &str, asr
     format!("{CHAT_PREFIX}{user_text}{CHAT_SUFFIX}")
 }
 
+/// 为极短实时 ASR final 提供上一段语境。上一段只用于消歧，模型只能翻译
+/// current_text，避免像 "palestra" 这种孤立词在没有上下文时被译成错误义项。
+pub(crate) fn build_contextual_prompt(
+    current_text: &str,
+    context_before: &str,
+    source_lang: &str,
+    target_lang: &str,
+) -> String {
+    let (_, src_en) = lang_names(source_lang);
+    let (_, tgt_en) = lang_names(target_lang);
+    let user_text = if is_chinese_family(source_lang) || is_chinese_family(target_lang) {
+        format!(
+            "将当前{src_en}语音片段翻译为{tgt_en}。上一段只用于理解语境，严禁翻译或复述上一段。\n\
+             要求：\n\
+             1. 只输出当前片段的{tgt_en}译文；\n\
+             2. 根据上一段语境选择当前短语最合适的含义；\n\
+             3. 不要添加当前片段没有表达的新信息；\n\
+             4. 不要解释，不要备注，不要输出原文。\n\n\
+             上一段（仅供语境）：{context_before}\n\
+             当前片段（只翻译这一段）：{current_text}\n\n\
+             Target ({tgt_en}):"
+        )
+    } else {
+        format!(
+            "Translate the current {src_en} speech fragment into {tgt_en}. The previous segment is context only; do NOT translate or repeat it.\n\
+             Requirements:\n\
+             1. Output ONLY the translation of the current fragment.\n\
+             2. Use the previous segment only to disambiguate the current short phrase.\n\
+             3. Do not add information not expressed by the current fragment.\n\
+             4. Do not explain, annotate, or output the source text.\n\n\
+             Previous segment (context only): {context_before}\n\
+             Current fragment (translate only this): {current_text}\n\n\
+             Target ({tgt_en}):"
+        )
+    };
+    format!("{CHAT_PREFIX}{user_text}{CHAT_SUFFIX}")
+}
+
 // ── 输出清洗（参考实现 _clean_*_translation_output 的 zh/en 精简版）────────────
 
 /// 模型可能回声的常见前缀（仅保留 zh/en 相关项）。
@@ -330,10 +368,11 @@ fn use_asr_correction_prompt(text: &str, asr_mode: bool) -> bool {
     asr_mode && text.split_whitespace().count() > 8
 }
 
-pub fn translate(
+fn translate_internal(
     text: &str,
     direction: &str,
     asr_mode: bool,
+    context_before: Option<&str>,
     on_token: Option<&mut dyn FnMut(&str)>,
 ) -> Result<String, String> {
     let Some((source_lang, target_lang)) = parse_direction(direction) else {
@@ -351,16 +390,23 @@ pub fn translate(
     let helper_exe = llama_sidecar::resolve_helper_exe()
         .ok_or_else(|| "本地推理引擎（llama-helper）未找到，请重新安装应用".to_string())?;
 
-    // Very short ASR utterances are usually complete phrases ("sono di Milano",
-    // "dove abiti?"). The ASR-correction prompt can over-interpret them, so use
-    // faithful direct translation for short inputs and reserve ASR correction
-    // for longer transcript segments.
+    // Very short ASR utterances are usually complete phrases. When a previous
+    // segment is supplied, use it only for word-sense disambiguation and still
+    // translate the current segment alone.
     let use_asr_correction = use_asr_correction_prompt(text, asr_mode);
     let faithful_short = asr_mode && !use_asr_correction;
-    let prompt = build_prompt(text, source_lang, target_lang, use_asr_correction);
-    // 输出预算按输入字符数估算（译文 token 数通常不超过原文字符数的两倍）
+    let prompt = if asr_mode {
+        if let Some(context) = context_before.filter(|c| !c.trim().is_empty()) {
+            build_contextual_prompt(text, context, source_lang, target_lang)
+        } else {
+            build_prompt(text, source_lang, target_lang, use_asr_correction)
+        }
+    } else {
+        build_prompt(text, source_lang, target_lang, false)
+    };
+
+    // 输出预算仅按当前片段估算；context 不需要被生成到答案里。
     let max_tokens = (text.chars().count() * 2).clamp(64, 1024) as u32;
-    // 韩语目标重复率偏高，按参考实现加大惩罚
     let (repeat_penalty, frequency_penalty) = if target_lang == "ko" {
         (KO_REPEAT_PENALTY, KO_FREQUENCY_PENALTY)
     } else {
@@ -386,6 +432,26 @@ pub fn translate(
     )?;
 
     Ok(postprocess(&raw, source_lang, target_lang))
+}
+
+pub fn translate(
+    text: &str,
+    direction: &str,
+    asr_mode: bool,
+    on_token: Option<&mut dyn FnMut(&str)>,
+) -> Result<String, String> {
+    translate_internal(text, direction, asr_mode, None, on_token)
+}
+
+/// Translate only `text`, using `context_before` solely to disambiguate a
+/// short realtime ASR fragment.
+pub fn translate_with_context(
+    text: &str,
+    context_before: &str,
+    direction: &str,
+    on_token: Option<&mut dyn FnMut(&str)>,
+) -> Result<String, String> {
+    translate_internal(text, direction, true, Some(context_before), on_token)
 }
 
 /// 启动预加载暖机：发一次最小 generate，使 llama-helper sidecar 启动并驻留
