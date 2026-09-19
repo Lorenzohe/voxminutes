@@ -10,7 +10,6 @@
 pub mod commands;
 pub mod engine;
 pub mod llm;
-pub mod m2m100;
 
 use serde::Serialize;
 use std::collections::{HashSet, VecDeque};
@@ -20,12 +19,9 @@ use std::sync::{Arc, LazyLock, Mutex};
 use tauri::{AppHandle, Emitter, Runtime};
 
 use engine::OpusMtEngine;
-use m2m100::M2M100Engine;
 
 pub const MODEL_DIR_ZH_EN: &str = "opus-mt-zh-en";
 pub const MODEL_DIR_EN_ZH: &str = "opus-mt-en-zh";
-pub const MODEL_DIR_IT_EN: &str = "opus-mt-it-en";
-pub const MODEL_DIR_M2M100: &str = "m2m100-418m-int8";
 
 /// Realtime inline translation master switch (default off).
 pub static TRANSLATION_ENABLED: AtomicBool = AtomicBool::new(false);
@@ -40,11 +36,11 @@ pub(crate) static TARGET_LANG: LazyLock<Mutex<String>> = LazyLock::new(|| Mutex:
 /// 不参与实时方向解析。
 pub(crate) static HOME_LANG: LazyLock<Mutex<String>> = LazyLock::new(|| Mutex::new("zh".to_string()));
 
-/// 翻译引擎选择："opus"（中英快速）| "m2m100"（多语言实时）| "hymt2"（高质量 LLM）。
+/// 翻译引擎选择："opus"（中英快速）| "hymt2"（高质量多语言 LLM）。
 pub(crate) static TRANSLATION_ENGINE: LazyLock<Mutex<String>> =
     LazyLock::new(|| Mutex::new("opus".to_string()));
 
-/// 当前翻译引擎 id（"opus" | "m2m100" | "hymt2"）。
+/// 当前翻译引擎 id（"opus" | "hymt2"）。
 pub fn current_engine() -> String {
     TRANSLATION_ENGINE
         .lock()
@@ -77,8 +73,6 @@ pub fn default_target_for_home(home: &str) -> String {
 
 static ZH_EN_ENGINE: LazyLock<Mutex<Option<Arc<OpusMtEngine>>>> = LazyLock::new(|| Mutex::new(None));
 static EN_ZH_ENGINE: LazyLock<Mutex<Option<Arc<OpusMtEngine>>>> = LazyLock::new(|| Mutex::new(None));
-static IT_EN_ENGINE: LazyLock<Mutex<Option<Arc<OpusMtEngine>>>> = LazyLock::new(|| Mutex::new(None));
-static M2M100_ENGINE: LazyLock<Mutex<Option<Arc<M2M100Engine>>>> = LazyLock::new(|| Mutex::new(None));
 
 fn model_dir(name: &str) -> PathBuf {
     crate::sherpa_onnx_engine::commands::resolved_models_dir().join(name)
@@ -88,7 +82,6 @@ pub fn get_engine(direction: &str) -> Result<Arc<OpusMtEngine>, String> {
     let (slot, dir_name) = match direction {
         "zh-en" => (&ZH_EN_ENGINE, MODEL_DIR_ZH_EN),
         "en-zh" => (&EN_ZH_ENGINE, MODEL_DIR_EN_ZH),
-        "it-en" => (&IT_EN_ENGINE, MODEL_DIR_IT_EN),
         other => return Err(format!("不支持的翻译方向: {}", other)),
     };
 
@@ -120,49 +113,12 @@ pub fn get_engine(direction: &str) -> Result<Arc<OpusMtEngine>, String> {
     Ok(engine)
 }
 
-pub fn get_m2m100_engine() -> Result<Arc<M2M100Engine>, String> {
-    let mut guard = M2M100_ENGINE.lock().map_err(|e| e.to_string())?;
-    if let Some(engine) = guard.as_ref() {
-        return Ok(engine.clone());
-    }
-    let dir = model_dir(MODEL_DIR_M2M100);
-    crate::llama_sidecar::emit_model_loading(MODEL_DIR_M2M100, "start", None, None);
-    let start = std::time::Instant::now();
-    let engine = match M2M100Engine::load(&dir) {
-        Ok(engine) => engine,
-        Err(e) => {
-            let msg = e.to_string();
-            crate::llama_sidecar::emit_model_loading(MODEL_DIR_M2M100, "error", None, Some(msg.clone()));
-            return Err(msg);
-        }
-    };
-    crate::llama_sidecar::emit_model_loading(
-        MODEL_DIR_M2M100,
-        "done",
-        Some(start.elapsed().as_millis() as u64),
-        None,
-    );
-    let engine = Arc::new(engine);
-    *guard = Some(engine.clone());
-    log::info!("M2M100 realtime translation engine ready ({})", dir.display());
-    Ok(engine)
-}
-
-pub fn unload_m2m100_engine() {
-    if let Ok(mut guard) = M2M100_ENGINE.lock() {
-        if guard.take().is_some() {
-            log::info!("M2M100 引擎已卸载，内存已释放");
-        }
-    }
-}
-
 /// Unload both OPUS-MT direction engines, freeing their memory (called when
 /// switching to a different translation engine).
 pub fn unload_opus_engines() {
     for (slot, direction) in [
         (&ZH_EN_ENGINE, "zh-en"),
         (&EN_ZH_ENGINE, "en-zh"),
-        (&IT_EN_ENGINE, "it-en"),
     ] {
         if let Ok(mut guard) = slot.lock() {
             if guard.take().is_some() {
@@ -177,7 +133,6 @@ pub fn is_model_installed(direction: &str) -> bool {
     let dir_name = match direction {
         "zh-en" => MODEL_DIR_ZH_EN,
         "en-zh" => MODEL_DIR_EN_ZH,
-        "it-en" => MODEL_DIR_IT_EN,
         _ => return false,
     };
     let dir = model_dir(dir_name);
@@ -262,11 +217,6 @@ static TRANSLATE_QUEUE: LazyLock<Mutex<VecDeque<TranslateTask>>> =
 static TRANSLATE_SEEN: LazyLock<Mutex<HashSet<u64>>> =
     LazyLock::new(|| Mutex::new(HashSet::new()));
 
-/// Italian -> English -> Chinese uses two sequential Marian passes. Limit
-/// preview work so translation cannot starve Whisper Small on CPU.
-static LAST_IT_OPUS_PARTIAL_AT: LazyLock<Mutex<Option<std::time::Instant>>> =
-    LazyLock::new(|| Mutex::new(None));
-
 /// 新录音开始（sequence 重置）：清空待译队列与已见集合。
 pub fn reset_translation_session() {
     if let Ok(mut q) = TRANSLATE_QUEUE.lock() {
@@ -274,9 +224,6 @@ pub fn reset_translation_session() {
     }
     if let Ok(mut seen) = TRANSLATE_SEEN.lock() {
         seen.clear();
-    }
-    if let Ok(mut last) = LAST_IT_OPUS_PARTIAL_AT.lock() {
-        *last = None;
     }
 }
 
@@ -305,8 +252,8 @@ pub struct TranslateUpdate {
 /// 支持时也返回 None（跳过）。
 fn resolve_direction(text: &str, target: &str) -> Option<(String, String, String)> {
     let engine = current_engine();
-    if engine == "hymt2" || engine == "m2m100" {
-        // Multilingual engines: prefer the explicit ASR language hint.
+    if engine == "hymt2" {
+        // Hy-MT2: prefer the explicit ASR language hint.
         // 拉丁字母语言仅靠字符特征无法可靠区分（例如意大利语会被误判为英语），
         // 因此录音场景里 language=it 应直接驱动 it -> target 翻译。
         let asr_hint = crate::get_language_preference_internal()
@@ -318,17 +265,8 @@ fn resolve_direction(text: &str, target: &str) -> Option<(String, String, String
         } else {
             target.to_string()
         };
-        let target_supported = if engine == "m2m100" {
-            m2m100::SUPPORTED_TARGET_LANGS.contains(&effective_target.as_str())
-        } else {
-            llm::SUPPORTED_TARGET_LANGS.contains(&effective_target.as_str())
-        };
-        let source_supported = if engine == "m2m100" {
-            m2m100::SUPPORTED_TARGET_LANGS.contains(&source_lang.as_str())
-        } else {
-            true
-        };
-        if source_lang == effective_target || !target_supported || !source_supported {
+        let target_supported = llm::SUPPORTED_TARGET_LANGS.contains(&effective_target.as_str());
+        if source_lang == effective_target || !target_supported {
             return None;
         }
         Some((
@@ -419,12 +357,7 @@ pub fn queue_partial_translation<R: Runtime>(
         return;
     }
     // Hy-MT2 Q6_K runs in the CUDA llama-helper on the Windows realtime
-    // path, so allow 4-second Whisper previews to be translated for live
-    // subtitles. M2M100 remains final-only because it shares CPU resources
-    // with ASR and can starve Whisper.
-    if current_engine() == "m2m100" {
-        return;
-    }
+    // path, so 4-second Whisper previews are translated for live subtitles.
     let text = text.trim().to_string();
     if text.is_empty() {
         return;
@@ -436,20 +369,6 @@ pub fn queue_partial_translation<R: Runtime>(
     let Some((direction, _, _)) = resolve_direction(&text, &target) else {
         return;
     };
-    if direction == "it-zh-via-en" || direction == "it-en" {
-        if let Ok(mut last) = LAST_IT_OPUS_PARTIAL_AT.lock() {
-            let now = std::time::Instant::now();
-            if last
-                .as_ref()
-                .map(|t| now.duration_since(*t) < std::time::Duration::from_secs(8))
-                .unwrap_or(false)
-            {
-                return;
-            }
-            *last = Some(now);
-        }
-    }
-
     if let Ok(mut q) = TRANSLATE_QUEUE.lock() {
         // Never let preview work delay committed translations.
         if q.iter().any(|task| !task.is_partial) {
@@ -567,14 +486,6 @@ pub async fn process_pending_translations<R: Runtime>(app: AppHandle<R>) {
                         }
                     }),
                 )
-            } else if engine_kind == "m2m100" {
-                get_m2m100_engine().and_then(|engine| {
-                    engine
-                        .translate(&text, &source_lang_stream, &target_lang_stream)
-                        .map_err(|e| e.to_string())
-                })
-            } else if direction_for_task == "it-zh-via-en" {
-                Err("Italian OPUS chain disabled; use Hy-MT2".to_string())
             } else {
                 get_engine(&direction_for_task).and_then(|engine| {
                     engine.translate_greedy(&text).map_err(|e| e.to_string())
