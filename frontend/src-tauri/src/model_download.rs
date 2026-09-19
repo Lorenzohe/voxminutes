@@ -286,7 +286,7 @@ const MODELS: &[DownloadableModel] = &[
         size_bytes: 2_489_758_112,
         required_files: &["google_gemma-3-4b-it-Q4_K_M.gguf"],
     },
-    // Hy-MT2 realtime translation model (GGUF, runs via the llama helper).
+    // Hy-MT2 Q4 realtime/translation model (GGUF, runs via llama-helper).
     DownloadableModel {
         id: "hy-mt2-1.8b-q4_k_m",
         display_name: "HY-MT2-1.8B-Q4_K_M",
@@ -306,8 +306,8 @@ const MODELS: &[DownloadableModel] = &[
         size_bytes: 1_133_080_448,
         required_files: &["Hy-MT2-1.8B-Q4_K_M.gguf"],
     },
-    // Hy-MT2 high-quality translation model. Kept installed separately for
-    // offline/re-transcription translation; realtime translation uses Q4_K_M.
+    // Hy-MT2 Q6 high-quality model. Q4 and Q6 are both selectable at runtime
+    // and share the same finalized translation logic; only the GGUF differs.
     DownloadableModel {
         id: "hy-mt2-1.8b-q6_k",
         display_name: "HY-MT2-1.8B-Q6_K",
