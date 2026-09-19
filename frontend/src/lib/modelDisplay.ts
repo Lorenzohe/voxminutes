@@ -88,6 +88,8 @@ export function modelDisplayName(id: string, t: Messages, fallback?: string): st
       return t.setModelNameOpusEnZh
     case 'hy-mt2-1.8b-q4_k_m':
       return t.setModelNameHymt2
+    case 'hy-mt2-1.8b-q6_k':
+      return 'HY-MT2-1.8B-Q6_K'
     case 'qwen2.5-3b-instruct-q4_k_m':
       return t.setModelNameQwen25
     case 'qwen3-4b-instruct-2507-q4_k_m':
