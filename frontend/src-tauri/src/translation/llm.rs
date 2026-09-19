@@ -195,8 +195,13 @@ const ECHO_PREFIXES: &[&str] = &[
     "Translation:", "translation:", "Translated:", "translated:",
     "Translate:", "translate:", "English:", "Chinese:",
     "Source:", "source:", "Source：", "source：",
+    "Target (Chinese):", "Target (Chinese)：",
+    "Target(Chinese):", "Target(Chinese)：",
+    "Target (中文):", "Target (中文)：",
+    "Target(中文):", "Target(中文)：",
     "译文：", "翻译：", "英文：", "中文：",
     "来源：", "来源:", "原文：", "原文:",
+    "目标（中文）：", "目标（中文）:", "目标(中文)：", "目标(中文):",
 ];
 
 /// 剔除 `<｜hy_...｜>` / `<|hy_...|>` / `<│hy_...│>` 形式的特殊 token。
@@ -326,6 +331,18 @@ fn restore_numeric_tokens(source: &str, translated: &str) -> String {
         search_from = start + expected.len();
     }
     result
+}
+
+/// Conservative Italian ASR fixes used only for translation input. The
+/// transcript shown to the user remains untouched. Keep this list tiny and
+/// phrase-specific so we do not "correct" legitimate technical vocabulary.
+fn repair_obvious_italian_asr_for_translation(text: &str, source_lang: &str) -> String {
+    if source_lang != "it" {
+        return text.to_string();
+    }
+
+    text.replace("siamo a mangio", "siamo a maggio")
+        .replace("Siamo a mangio", "Siamo a maggio")
 }
 
 /// 折叠连续重复段落（模型陷入循环时的安全网；间隔不同内容的有意重复会保留）。
@@ -461,23 +478,27 @@ fn translate_internal(
     let helper_exe = llama_sidecar::resolve_helper_exe()
         .ok_or_else(|| "本地推理引擎（llama-helper）未找到，请重新安装应用".to_string())?;
 
+    // Apply only very conservative, phrase-specific ASR repairs to the text
+    // sent to Hy-MT2. The visible transcript remains the original Whisper text.
+    let translation_text = repair_obvious_italian_asr_for_translation(text, source_lang);
+
     // Very short ASR utterances are usually complete phrases. When a previous
     // segment is supplied, use it only for word-sense disambiguation and still
     // translate the current segment alone.
-    let use_asr_correction = use_asr_correction_prompt(text, asr_mode);
+    let use_asr_correction = use_asr_correction_prompt(&translation_text, asr_mode);
     let faithful_short = asr_mode && !use_asr_correction;
     let prompt = if asr_mode {
         if let Some(context) = context_before.filter(|c| !c.trim().is_empty()) {
-            build_contextual_prompt(text, context, source_lang, target_lang)
+            build_contextual_prompt(&translation_text, context, source_lang, target_lang)
         } else {
-            build_prompt(text, source_lang, target_lang, use_asr_correction)
+            build_prompt(&translation_text, source_lang, target_lang, use_asr_correction)
         }
     } else {
-        build_prompt(text, source_lang, target_lang, false)
+        build_prompt(&translation_text, source_lang, target_lang, false)
     };
 
     // 输出预算仅按当前片段估算；context 不需要被生成到答案里。
-    let max_tokens = (text.chars().count() * 2).clamp(64, 1024) as u32;
+    let max_tokens = (translation_text.chars().count() * 2).clamp(64, 1024) as u32;
     let (repeat_penalty, frequency_penalty) = if target_lang == "ko" {
         (KO_REPEAT_PENALTY, KO_FREQUENCY_PENALTY)
     } else {
@@ -503,7 +524,7 @@ fn translate_internal(
     )?;
 
     let cleaned = postprocess(&raw, source_lang, target_lang);
-    let numeric_safe = restore_numeric_tokens(text, &cleaned);
+    let numeric_safe = restore_numeric_tokens(&translation_text, &cleaned);
     Ok(numeric_safe)
 }
 
@@ -675,6 +696,33 @@ mod tests {
         assert_eq!(
             postprocess("Source: 这是译文", "it", "zh"),
             "这是译文"
+        );
+    }
+
+    #[test]
+    fn postprocess_strips_target_labels() {
+        assert_eq!(
+            postprocess("目标（中文）：这是译文", "it", "zh"),
+            "这是译文"
+        );
+        assert_eq!(
+            postprocess("Target (Chinese): 这是译文", "it", "zh"),
+            "这是译文"
+        );
+    }
+
+    #[test]
+    fn repairs_only_obvious_italian_calendar_asr_for_translation() {
+        assert_eq!(
+            repair_obvious_italian_asr_for_translation(
+                "sole, siamo a mangio quindi fuori c'è ancora luce",
+                "it"
+            ),
+            "sole, siamo a maggio quindi fuori c'è ancora luce"
+        );
+        assert_eq!(
+            repair_obvious_italian_asr_for_translation("siamo a mangio", "en"),
+            "siamo a mangio"
         );
     }
 
