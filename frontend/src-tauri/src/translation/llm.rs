@@ -128,7 +128,7 @@ pub(crate) fn build_prompt(text: &str, source_lang: &str, target_lang: &str, asr
                  5. Preserve meaningful interjections, repetitions, and tone while producing fluent natural speech.\n\
                  6. Do not explain or add notes.\n\
                  7. Preserve numbers, times, dimensions, units, model names, and part numbers exactly; do not alter numeric values or identifiers.\n\
-                 8. Never output labels such as "Source:", "Original:", or their translated equivalents. Translate ordinary source-language words instead of leaving them in the target text; preserve source text only for proper names, model names, part numbers, and other identifiers. Render time naturally in the target language while preserving every numeric value exactly."
+                 8. Never output labels such as \"Source:\", \"Original:\", or their translated equivalents. Translate ordinary source-language words instead of leaving them in the target text; preserve source text only for proper names, model names, part numbers, and other identifiers. Render time naturally in the target language while preserving every numeric value exactly."
             )
         };
         format!("{instruction}\n\nSource: {text}\n\nTarget ({tgt_en}):")
