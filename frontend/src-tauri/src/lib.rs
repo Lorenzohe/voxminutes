@@ -494,7 +494,7 @@ async fn set_language_preference(language: String) -> Result<(), String> {
     // language detection for short fragments.
     let effective_language = if language == "auto"
         && translation::TRANSLATION_ENABLED.load(Ordering::SeqCst)
-        && translation::current_engine() == "hymt2"
+        && translation::is_hymt2_engine(&translation::current_engine())
     {
         "it".to_string()
     } else {
@@ -647,7 +647,9 @@ pub fn run() {
                     let migrated_engine = match engine.as_str() {
                         // Legacy generic Hy-MT2 was the finalized Q6 route.
                         "hymt2" => Some("hymt2-q6".to_string()),
-                        "opus" | "hymt2-q4" | "hymt2-q6" => Some(engine),
+                        "opus" => Some("opus".to_string()),
+                        "hymt2-q4" => Some("hymt2-q4".to_string()),
+                        "hymt2-q6" => Some("hymt2-q6".to_string()),
                         _ => None,
                     };
                     if let Some(engine) = migrated_engine {
