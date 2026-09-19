@@ -15,7 +15,7 @@ use super::vad::{ContinuousVadProcessor, SpeechSegment};
 
 pub(crate) const WHISPER_PARTIAL_CHUNK_FLAG: u64 = 1u64 << 63;
 const WHISPER_PREVIEW_INTERVAL_SAMPLES: usize = 4 * 16000;
-const WHISPER_MAX_LIVE_SEGMENT_SAMPLES: usize = 12 * 16000;
+const WHISPER_MAX_LIVE_SEGMENT_SAMPLES: usize = 15 * 16000;
 const WHISPER_ROLLOVER_OVERLAP_SAMPLES: usize = 16_000; // 1.0s at 16kHz
 const DEFAULT_VAD_REDEMPTION_MS: u32 = 800;
 const WHISPER_VAD_REDEMPTION_MS: u32 = 1200;
@@ -961,10 +961,10 @@ impl AudioPipeline {
 
         let current_len = self.vad_processor.current_speech_len_samples();
 
-        // Safety boundary for truly continuous speech. Partial subtitles keep updating
-        // every 4s, while a natural final now waits for ~2s of silence. Force a
-        // final at 24s so we stay comfortably below Whisper's 30s window.
-        // Keep 2s overlap so the next window retains linguistic context.
+        // Natural pauses are finalized by VAD after ~1.2s of silence. For truly
+        // continuous speech, use a 15s hard ceiling: long enough to preserve
+        // sentence context, but short enough for realtime translation. Keep 1s
+        // overlap so a word cut at the hard boundary can be recovered next window.
         if current_len >= WHISPER_MAX_LIVE_SEGMENT_SAMPLES {
             if let Some(segment) = self
                 .vad_processor
