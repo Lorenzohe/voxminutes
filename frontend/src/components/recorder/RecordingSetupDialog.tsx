@@ -168,9 +168,9 @@ export function RecordingSetupDialog({ open, onOpenChange, onConfirm }: Recordin
 
     if (effectiveLanguage === 'it' && translateEnabled) {
       const target = home === 'en' ? 'en' : 'zh'
-      if (translationEngine !== 'hymt2') {
-        await ipcSetTranslationEngine('hymt2')
-        setTranslationEngine('hymt2')
+      if (translationEngine === 'opus') {
+        await ipcSetTranslationEngine('hymt2-q6')
+        setTranslationEngine('hymt2-q6')
       }
       if (translateTargetLang !== target) {
         await ipcSetTranslationTargetLang(target)
@@ -277,8 +277,8 @@ export function RecordingSetupDialog({ open, onOpenChange, onConfirm }: Recordin
                   const next = e.target.value
                   setLanguage(next)
                   if (next === 'it') {
-                    if (translationEngine !== 'hymt2') {
-                      handleEngineChange('hymt2')
+                    if (translationEngine === 'opus') {
+                      handleEngineChange('hymt2-q6')
                     }
                     const target = home === 'en' ? 'en' : 'zh'
                     if (translateTargetLang !== target) {
@@ -331,7 +331,8 @@ export function RecordingSetupDialog({ open, onOpenChange, onConfirm }: Recordin
                     onChange={(e) => handleEngineChange(e.target.value as TranslationEngine)}
                   >
                     <option value="opus">{t.recEngineOpus}</option>
-                    <option value="hymt2">{t.recEngineHymt2}</option>
+                    <option value="hymt2-q4">HY-MT2-Q4</option>
+                    <option value="hymt2-q6">HY-MT2-Q6</option>
                   </select>
                 </label>
               )}
