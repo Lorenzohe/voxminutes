@@ -6,9 +6,20 @@
 
 use crate::llama_sidecar::{self, GenerateParams};
 
-/// 实时 Hy-MT2 使用 Q6_K：在 GTX 1660 SUPER CUDA helper 上运行。
-/// Q4_K_M 继续保留在独立目录，作为较轻量的备用模型。
-const MODEL_DIR: &str = "hy-mt2-1.8b-q6k";
+/// Hy-MT2 Q4/Q6 share the exact same translation pipeline, prompts,
+/// post-processing, numeric protection, Italian ASR repair, and contextual
+/// logic. Only the GGUF model directory changes.
+const MODEL_DIR_Q4: &str = "hy-mt2-1.8b";
+const MODEL_DIR_Q6: &str = "hy-mt2-1.8b-q6k";
+
+pub(crate) fn model_dir_for_engine(engine: &str) -> &'static str {
+    match engine {
+        "hymt2-q4" => MODEL_DIR_Q4,
+        // Legacy "hymt2" and any current Q6 route resolve to Q6.
+        "hymt2" | "hymt2-q6" => MODEL_DIR_Q6,
+        _ => MODEL_DIR_Q6,
+    }
+}
 
 // ── 聊天模板（Hy-MT2 特殊 token）──────────────────────────────────────────────
 //
@@ -472,6 +483,7 @@ fn translate_internal(
     direction: &str,
     asr_mode: bool,
     context_before: Option<&str>,
+    model_dir: &str,
     on_token: Option<&mut dyn FnMut(&str)>,
 ) -> Result<String, String> {
     let Some((source_lang, target_lang)) = parse_direction(direction) else {
@@ -484,8 +496,8 @@ fn translate_internal(
         return Ok(String::new());
     }
 
-    let model_path = llama_sidecar::find_gguf_model(MODEL_DIR)
-        .ok_or_else(|| "Hy-MT2 翻译模型未安装，请先到设置页下载。".to_string())?;
+    let model_path = llama_sidecar::find_gguf_model(model_dir)
+        .ok_or_else(|| format!("Hy-MT2 翻译模型未安装：{}", model_dir))?;
     let helper_exe = llama_sidecar::resolve_helper_exe()
         .ok_or_else(|| "本地推理引擎（llama-helper）未找到，请重新安装应用".to_string())?;
 
@@ -545,7 +557,24 @@ pub fn translate(
     asr_mode: bool,
     on_token: Option<&mut dyn FnMut(&str)>,
 ) -> Result<String, String> {
-    translate_internal(text, direction, asr_mode, None, on_token)
+    translate_internal(text, direction, asr_mode, None, MODEL_DIR_Q6, on_token)
+}
+
+pub fn translate_for_engine(
+    text: &str,
+    direction: &str,
+    asr_mode: bool,
+    engine: &str,
+    on_token: Option<&mut dyn FnMut(&str)>,
+) -> Result<String, String> {
+    translate_internal(
+        text,
+        direction,
+        asr_mode,
+        None,
+        model_dir_for_engine(engine),
+        on_token,
+    )
 }
 
 /// Translate only `text`, using `context_before` solely to disambiguate a
@@ -556,14 +585,43 @@ pub fn translate_with_context(
     direction: &str,
     on_token: Option<&mut dyn FnMut(&str)>,
 ) -> Result<String, String> {
-    translate_internal(text, direction, true, Some(context_before), on_token)
+    translate_internal(
+        text,
+        direction,
+        true,
+        Some(context_before),
+        MODEL_DIR_Q6,
+        on_token,
+    )
+}
+
+pub fn translate_with_context_for_engine(
+    text: &str,
+    context_before: &str,
+    direction: &str,
+    engine: &str,
+    on_token: Option<&mut dyn FnMut(&str)>,
+) -> Result<String, String> {
+    translate_internal(
+        text,
+        direction,
+        true,
+        Some(context_before),
+        model_dir_for_engine(engine),
+        on_token,
+    )
 }
 
 /// 启动预加载暖机：发一次最小 generate，使 llama-helper sidecar 启动并驻留
 /// Hy-MT2 模型，消除首次翻译的冷启动等待。阻塞调用，请放在 spawn_blocking 中。
 pub fn warmup() -> Result<(), String> {
-    let model_path = llama_sidecar::find_gguf_model(MODEL_DIR)
-        .ok_or_else(|| "Hy-MT2 翻译模型未安装，请先到设置页下载。".to_string())?;
+    warmup_for_engine("hymt2-q6")
+}
+
+pub fn warmup_for_engine(engine: &str) -> Result<(), String> {
+    let model_dir = model_dir_for_engine(engine);
+    let model_path = llama_sidecar::find_gguf_model(model_dir)
+        .ok_or_else(|| format!("Hy-MT2 翻译模型未安装：{}", model_dir))?;
     let helper_exe = llama_sidecar::resolve_helper_exe()
         .ok_or_else(|| "本地推理引擎（llama-helper）未找到，请重新安装应用".to_string())?;
 
