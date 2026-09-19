@@ -718,8 +718,10 @@ fn strip_whisper_cross_segment_overlap(prev: &str, next: &str) -> String {
             continue;
         }
 
-        let safe_single_word =
-            len == 1 && normalize_word(next_slice[0]).chars().count() >= 6;
+        let single_norm = normalize_word(next_slice[0]);
+        let safe_single_word = len == 1
+            && single_norm.chars().count() >= 6
+            && !is_semantic_guard_word(&single_norm);
         if len >= 2 || safe_single_word {
             if fuzzy_matches > 0 {
                 debug!(
@@ -729,6 +731,21 @@ fn strip_whisper_cross_segment_overlap(prev: &str, next: &str) -> String {
                     len
                 );
             }
+
+            // If the overlapping prefix ends in a semantic guard word such as
+            // Italian "non", keep that guard at the start of the new segment.
+            // Example:
+            //   prev: "... per oggi non"
+            //   next: "Per oggi non voglio più lavorare"
+            // Removing all three overlap words turns a negative sentence into a
+            // positive one. We still dedupe "per oggi", but preserve "non".
+            if len >= 2 {
+                let last_overlap_norm = normalize_word(next_slice[len - 1]);
+                if is_semantic_guard_word(&last_overlap_norm) {
+                    return next_words[len - 1..].join(" ").trim().to_string();
+                }
+            }
+
             return next_words[len..].join(" ").trim().to_string();
         }
     }
@@ -873,6 +890,17 @@ mod live_whisper_tests {
                 "questa macchina per migliorare la produzione"
             ),
             "per migliorare la produzione"
+        );
+    }
+
+    #[test]
+    fn preserves_dangling_negation_at_overlap_boundary() {
+        assert_eq!(
+            strip_whisper_cross_segment_overlap(
+                "rilassarmi un po'. Per oggi niente più lavoro, per oggi non...",
+                "Per oggi non voglio più lavorare, adesso è il momento"
+            ),
+            "non voglio più lavorare, adesso è il momento"
         );
     }
 
