@@ -428,8 +428,20 @@ impl ModelState {
         // Build the sampler chain once per request; penalties keep their
         // accepted-token history via `sampler.accept(token)` below.
         let sampler = if temperature <= 0.0 {
-            // Greedy sampling for temp <= 0
-            LlamaSampler::chain_simple([LlamaSampler::greedy()])
+            // Deterministic translation path. Keep repetition/frequency
+            // penalties active before greedy selection so temperature=0 does
+            // not disable the anti-loop safeguards used by Hy-MT2.
+            let mut samplers = Vec::new();
+            if repeat_penalty.is_some() || frequency_penalty.is_some() {
+                samplers.push(LlamaSampler::penalties(
+                    -1,
+                    repeat_penalty.unwrap_or(1.0),
+                    frequency_penalty.unwrap_or(0.0),
+                    0.0,
+                ));
+            }
+            samplers.push(LlamaSampler::greedy());
+            LlamaSampler::chain_simple(samplers)
         } else {
             // Random sampling with temperature/top_k/top_p (+ optional penalties)
             let seed = SystemTime::now()
