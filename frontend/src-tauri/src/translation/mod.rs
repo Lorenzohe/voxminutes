@@ -356,8 +356,20 @@ pub fn queue_partial_translation<R: Runtime>(
     if !TRANSLATION_ENABLED.load(Ordering::SeqCst) {
         return;
     }
-    // Hy-MT2 Q6_K runs in the CUDA llama-helper on the Windows realtime
-    // path, so 4-second Whisper previews are translated for live subtitles.
+    // Hy-MT2 generation is serialized through a single llama-helper process.
+    // A Whisper partial is replaceable, but once generation has started it
+    // cannot be preempted by a later committed final. On longer Italian
+    // utterances that can block the translation worker for tens of seconds
+    // (or until max_tokens), starving all following final segments.
+    //
+    // Therefore Hy-MT2 realtime translation is final-only. Whisper still
+    // updates the source transcript live; committed segments are translated
+    // immediately by queue_translation(). OPUS previews remain enabled because
+    // that engine is much cheaper and does not occupy the llama sidecar.
+    if current_engine() == "hymt2" {
+        return;
+    }
+
     let text = text.trim().to_string();
     if text.is_empty() {
         return;
