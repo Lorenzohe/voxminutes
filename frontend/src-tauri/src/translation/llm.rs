@@ -6,9 +6,9 @@
 
 use crate::llama_sidecar::{self, GenerateParams};
 
-/// 实时 Hy-MT2 使用 Q4_K_M，优先保证 GTX 1660 SUPER 上的实时吞吐。
-/// Q6_K 保留在独立目录，后续专用于 History / Offline 高质量翻译。
-const MODEL_DIR: &str = "hy-mt2-1.8b";
+/// 实时 Hy-MT2 使用 Q6_K：在 GTX 1660 SUPER CUDA helper 上运行。
+/// Q4_K_M 继续保留在独立目录，作为较轻量的备用模型。
+const MODEL_DIR: &str = "hy-mt2-1.8b-q6k";
 
 // ── 聊天模板（Hy-MT2 特殊 token）──────────────────────────────────────────────
 //
