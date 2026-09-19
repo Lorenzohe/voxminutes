@@ -600,26 +600,36 @@ pub fn run() {
             })
             .expect("Failed to initialize database");
 
-            // 读回持久化的翻译设置（引擎/home 语言/目标语言）写入内存态，读不到保持默认值
+            // 读回持久化的翻译设置（开关/引擎/home 语言/目标语言）写入内存态，读不到保持默认值
             {
                 use crate::database::repositories::setting::SettingsRepository;
                 let app_state = _app.state::<state::AppState>();
                 let pool = app_state.db_manager.pool();
-                let (saved_engine, saved_lang, saved_home) = tauri::async_runtime::block_on(async {
-                    let engine = SettingsRepository::get(pool, "translation.engine")
-                        .await
-                        .ok()
-                        .flatten();
-                    let lang = SettingsRepository::get(pool, "translation.target_lang")
-                        .await
-                        .ok()
-                        .flatten();
-                    let home = SettingsRepository::get(pool, "translation.home_lang")
-                        .await
-                        .ok()
-                        .flatten();
-                    (engine, lang, home)
-                });
+                let (saved_enabled, saved_engine, saved_lang, saved_home) =
+                    tauri::async_runtime::block_on(async {
+                        let enabled = SettingsRepository::get(pool, "translation.enabled")
+                            .await
+                            .ok()
+                            .flatten();
+                        let engine = SettingsRepository::get(pool, "translation.engine")
+                            .await
+                            .ok()
+                            .flatten();
+                        let lang = SettingsRepository::get(pool, "translation.target_lang")
+                            .await
+                            .ok()
+                            .flatten();
+                        let home = SettingsRepository::get(pool, "translation.home_lang")
+                            .await
+                            .ok()
+                            .flatten();
+                        (enabled, engine, lang, home)
+                    });
+                if let Some(enabled) = saved_enabled {
+                    let enabled = matches!(enabled.as_str(), "true" | "1" | "yes" | "on");
+                    translation::TRANSLATION_ENABLED
+                        .store(enabled, std::sync::atomic::Ordering::SeqCst);
+                }
                 if let Some(engine) =
                     saved_engine.filter(|e| matches!(e.as_str(), "opus" | "hymt2"))
                 {
