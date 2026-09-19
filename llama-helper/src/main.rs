@@ -568,6 +568,10 @@ fn main() -> Result<()> {
         "🦙 llama-helper starting (idle timeout: {}s)",
         idle_timeout_secs
     );
+    #[cfg(feature = "cuda")]
+    eprintln!("🚀 Backend build: CUDA enabled");
+    #[cfg(not(feature = "cuda"))]
+    eprintln!("💻 Backend build: CPU-only");
 
     let mut state = ModelState::new()?;
 
