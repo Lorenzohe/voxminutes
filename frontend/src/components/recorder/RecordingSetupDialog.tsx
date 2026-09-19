@@ -93,7 +93,6 @@ export function RecordingSetupDialog({ open, onOpenChange, onConfirm }: Recordin
   const modelLabel = (name: string): string => {
     if (name === 'x-asr-480ms') return t.recModelXAsr
     if (name === 'sense-voice') return t.recModelSenseVoice
-    if (name === 'whisper-tiny') return 'Whisper Tiny Multilingual'
     if (name === 'whisper-small') return 'Whisper Small INT8'
     if (name === 'whisper-medium') return 'Whisper Medium INT8'
     return name
@@ -102,7 +101,6 @@ export function RecordingSetupDialog({ open, onOpenChange, onConfirm }: Recordin
   const modelDescription = (name: string): string => {
     if (name === 'x-asr-480ms') return t.recXAsrDesc
     if (name === 'sense-voice') return t.recSenseVoiceDesc
-    if (name === 'whisper-tiny') return '速度优先 · Italiano / English'
     if (name === 'whisper-small') return '默认 / 均衡 · CPU稳定 · 意大利语推荐'
     if (name === 'whisper-medium') return '高精度 · CUDA优先 / CPU回退 · 正式会议'
     return ''
